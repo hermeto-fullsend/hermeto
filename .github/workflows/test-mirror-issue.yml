@@ -5,7 +5,7 @@ on:
       issue_number:
         description: 'Mirror issue number'
         required: true
-        type: number
+        type: string
 
 permissions:
   issues: write
