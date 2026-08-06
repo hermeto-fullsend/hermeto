@@ -46,6 +46,7 @@ from hermeto.core.package_managers.gomod.main import (
     _parse_go_sum,
     _parse_vendor,
     _process_modules_json_stream,
+    _proxy_qualifier,
     _resolve_gomod,
     _validate_local_replacements,
     _vendor_changed,
@@ -403,7 +404,10 @@ def test_module_to_component() -> None:
     expected_component = Component(
         name="github.com/another-org/nice-repo",
         version="v0.0.1",
-        purl="pkg:golang/github.com/another-org/nice-repo@v0.0.1?type=module",
+        purl=(
+            "pkg:golang/github.com/another-org/nice-repo@v0.0.1"
+            "?proxy=https://goproxy.corp.example.com&type=module"
+        ),
         external_references=[
             ExternalReference(
                 url="https://goproxy.corp.example.com",
@@ -453,6 +457,95 @@ def test_get_proxy_for_module(
     module = ParsedModule(path="github.com/org/repo", version="v1.0.0", origin=origin)
 
     assert _get_proxy_for_module(module) == expected_proxies
+
+
+@pytest.mark.parametrize(
+    "proxy, expected_qualifier",
+    [
+        (None, {}),
+        (["https://proxy.example.com"], {"proxy": "https://proxy.example.com"}),
+        (
+            ["https://proxy1.example.com", "https://proxy2.example.com"],
+            {"proxy": "https://proxy1.example.com|https://proxy2.example.com"},
+        ),
+    ],
+)
+def test_proxy_qualifier(
+    proxy: list[str] | None,
+    expected_qualifier: dict[str, str],
+) -> None:
+    module = Module(
+        name="github.com/org/repo",
+        version="v1.0.0",
+        original_name="github.com/org/repo",
+        real_path="github.com/org/repo",
+        proxy=proxy,
+    )
+    assert _proxy_qualifier(module) == expected_qualifier
+
+
+def test_module_purl_includes_proxy_qualifier() -> None:
+    module = Module(
+        name="github.com/org/repo",
+        version="v1.0.0",
+        original_name="github.com/org/repo",
+        real_path="github.com/org/repo",
+        proxy=["https://goproxy.corp.example.com"],
+    )
+    assert (
+        module.purl
+        == "pkg:golang/github.com/org/repo@v1.0.0?proxy=https://goproxy.corp.example.com&type=module"
+    )
+
+
+def test_module_purl_omits_proxy_qualifier_when_direct() -> None:
+    module = Module(
+        name="github.com/org/repo",
+        version="v1.0.0",
+        original_name="github.com/org/repo",
+        real_path="github.com/org/repo",
+    )
+    assert module.purl == "pkg:golang/github.com/org/repo@v1.0.0?type=module"
+
+
+def test_package_purl_includes_proxy_qualifier() -> None:
+    parent = Module(
+        name="github.com/org/repo",
+        version="v1.0.0",
+        original_name="github.com/org/repo",
+        real_path="github.com/org/repo",
+        proxy=["https://goproxy.corp.example.com"],
+    )
+    pkg = Package(relative_path="sub/pkg", module=parent)
+    assert pkg.purl == (
+        "pkg:golang/github.com/org/repo/sub/pkg@v1.0.0"
+        "?proxy=https://goproxy.corp.example.com&type=package"
+    )
+
+
+def test_package_purl_omits_proxy_qualifier_when_direct() -> None:
+    parent = Module(
+        name="github.com/org/repo",
+        version="v1.0.0",
+        original_name="github.com/org/repo",
+        real_path="github.com/org/repo",
+    )
+    pkg = Package(relative_path="sub/pkg", module=parent)
+    assert pkg.purl == "pkg:golang/github.com/org/repo/sub/pkg@v1.0.0?type=package"
+
+
+def test_module_purl_with_multiple_proxies() -> None:
+    module = Module(
+        name="github.com/org/repo",
+        version="v1.0.0",
+        original_name="github.com/org/repo",
+        real_path="github.com/org/repo",
+        proxy=["https://proxy1.example.com", "https://proxy.golang.org"],
+    )
+    assert module.purl == (
+        "pkg:golang/github.com/org/repo@v1.0.0"
+        "?proxy=https://proxy1.example.com%7Chttps://proxy.golang.org&type=module"
+    )
 
 
 def test_create_packages_from_parsed_data() -> None:

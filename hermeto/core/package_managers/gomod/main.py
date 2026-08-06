@@ -151,7 +151,7 @@ class Module(NamedTuple):
             type="golang",
             name=self.real_path,
             version=self.version,
-            qualifiers={"type": "module"} | _vcs_url_if_needed(self),
+            qualifiers={"type": "module"} | _vcs_url_if_needed(self) | _proxy_qualifier(self),
         )
         return purl.to_string()
 
@@ -213,7 +213,11 @@ class Package(NamedTuple):
             type="golang",
             name=self.real_path,
             version=self.module.version,
-            qualifiers={"type": "package"} | _vcs_url_if_needed(self.module),
+            qualifiers=(
+                {"type": "package"}
+                | _vcs_url_if_needed(self.module)
+                | _proxy_qualifier(self.module)
+            ),
         )
         return purl.to_string()
 
@@ -235,6 +239,17 @@ def _vcs_url_if_needed(module: Module) -> dict[str, str]:
         # Local replaces need a vcs_url as well and are supposed to be consumed from the file
         # system too.
         return {"vcs_url": module.repo_id.as_vcs_url_qualifier()}
+    return dict()
+
+
+def _proxy_qualifier(module: Module) -> dict[str, str]:
+    """Return a proxy qualifier for PURLs when a custom proxy was used.
+
+    The PURL spec has no standard qualifier for proxy information, so we use a
+    custom ``proxy`` qualifier. Multiple proxy URLs are joined with ``|``.
+    """
+    if module.proxy:
+        return {"proxy": "|".join(module.proxy)}
     return dict()
 
 
