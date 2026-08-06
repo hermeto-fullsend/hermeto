@@ -1,0 +1,9 @@
+# SPDX-License-Identifier: GPL-3.0-only
+
+[allowlist]
+  description = "Allowlist for false positives"
+  paths = [
+    '''tests/certificates/''',
+    '''tests/dnfserver/certificates/''',
+    '''\.yarn/releases/yarn-.*\.cjs$''',
+  ]
