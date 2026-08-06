@@ -119,6 +119,28 @@ def _config_path(request: Request) -> Path:
     return request.output_dir.join_within_root(".cargo/config.toml").path
 
 
+def _consolidate_vendor_dirs(output_dir: RootedPath, num_packages: int) -> None:
+    """Merge per-package cargo vendor directories into a single shared directory.
+
+    The cargo backend creates isolated per-package vendor directories
+    (deps/cargo/0, deps/cargo/1, …) to prevent source collisions between
+    packages that depend on the same crate from different sources. For pip,
+    all Rust extensions share one .cargo/config.toml that can reference only
+    one vendor directory, so the per-package directories must be flattened
+    into deps/cargo.
+    """
+    combined = output_dir.join_within_root("deps/cargo").path
+    for i in range(num_packages):
+        per_pkg = combined / str(i)
+        if not per_pkg.is_dir():
+            continue
+        for crate_dir in list(per_pkg.iterdir()):
+            target = combined / crate_dir.name
+            if not target.exists():
+                shutil.move(str(crate_dir), str(target))
+        shutil.rmtree(per_pkg)
+
+
 def _merge_cargo_config_files(project_files: list[ProjectFile]) -> str:
     """
     Merge cargo config project files into a single TOML template.
@@ -126,10 +148,18 @@ def _merge_cargo_config_files(project_files: list[ProjectFile]) -> str:
     Each cargo config file may contain git dependencies, so the final template must be dynamically
     generated from all Rust extensions in the Python project. Currently, the cargo backend only
     produces config files (no other project files).
+
+    The vendor directory path is normalised to the consolidated deps/cargo
+    directory because _consolidate_vendor_dirs has already flattened the
+    per-package subdirectories.
     """
-    all_sources = {}
+    all_sources: dict[str, dict] = {}
     for pf in project_files:
         all_sources.update(tomlkit.parse(pf.template).get("source", {}))
+
+    # After consolidation, all crates live under deps/cargo directly.
+    if "vendored-sources" in all_sources:
+        all_sources["vendored-sources"]["directory"] = "${output_dir}/deps/cargo"
 
     return tomlkit.dumps({"source": all_sources})
 
@@ -157,6 +187,13 @@ def find_and_fetch_rust_dependencies(
             update={"packages": packages_containing_rust_code, "source_dir": pip_deps_dir}
         )
         result = fetch_cargo_source(cargo_request, invoked_through_pip=True)
+
+        # The cargo backend vendors each package into an isolated per-package
+        # subdirectory (deps/cargo/0, deps/cargo/1, …) to prevent source
+        # collisions. For pip, all Rust extensions share a single
+        # .cargo/config.toml, so the per-package directories must be
+        # consolidated into a single deps/cargo directory.
+        _consolidate_vendor_dirs(request.output_dir, len(packages_containing_rust_code))
 
         template = _merge_cargo_config_files(result.build_config.project_files)
         # A config pointing to deps/cargo directory and an environment variable

@@ -6,10 +6,12 @@ import tomlkit
 
 from hermeto.core.models.output import ProjectFile
 from hermeto.core.package_managers.python.pip.rust import (
+    _consolidate_vendor_dirs,
     _get_rust_root_dir,
     _merge_cargo_config_files,
     _shortest_path_parent,
 )
+from hermeto.core.rooted_path import RootedPath
 
 
 @pytest.mark.parametrize(
@@ -64,6 +66,9 @@ def test_get_rust_root_dir_prefers_cargo_lock_over_cargo_toml(tmp_path: Path) ->
 
 
 def test_merge_cargo_config_files() -> None:
+    # The cargo backend creates per-package vendor directories (deps/cargo/0,
+    # deps/cargo/1, …). The merge function normalises the vendor path back to
+    # deps/cargo because _consolidate_vendor_dirs has already flattened them.
     config1 = """
     [source.crates-io]
     replace-with = "vendored-sources"
@@ -74,7 +79,7 @@ def test_merge_cargo_config_files() -> None:
     replace-with = "vendored-sources"
 
     [source.vendored-sources]
-    directory = "${output_dir}/deps/cargo"
+    directory = "${output_dir}/deps/cargo/0"
     """
 
     config2 = """
@@ -87,7 +92,7 @@ def test_merge_cargo_config_files() -> None:
     replace-with = "vendored-sources"
 
     [source.vendored-sources]
-    directory = "${output_dir}/deps/cargo"
+    directory = "${output_dir}/deps/cargo/1"
     """
 
     expected_config = """
@@ -117,3 +122,52 @@ def test_merge_cargo_config_files() -> None:
             for template in variation
         ]
         assert tomlkit.parse(_merge_cargo_config_files(pfs)) == expected
+
+
+def test_consolidate_vendor_dirs(tmp_path: Path) -> None:
+    """Per-package vendor subdirs are flattened into the parent deps/cargo dir."""
+    output_dir = RootedPath(tmp_path)
+    cargo_dir = tmp_path / "deps" / "cargo"
+
+    # Simulate two per-package vendor directories with different crates
+    pkg0 = cargo_dir / "0"
+    pkg1 = cargo_dir / "1"
+
+    (pkg0 / "crate-a-1.0").mkdir(parents=True)
+    (pkg0 / "crate-a-1.0" / ".cargo-checksum.json").write_text('{"package":"abc"}')
+
+    (pkg1 / "crate-b-2.0").mkdir(parents=True)
+    (pkg1 / "crate-b-2.0" / ".cargo-checksum.json").write_text('{"package":"def"}')
+
+    _consolidate_vendor_dirs(output_dir, 2)
+
+    # Per-package subdirs should be removed
+    assert not pkg0.exists()
+    assert not pkg1.exists()
+
+    # Crate dirs should be directly under deps/cargo
+    assert (cargo_dir / "crate-a-1.0" / ".cargo-checksum.json").read_text() == '{"package":"abc"}'
+    assert (cargo_dir / "crate-b-2.0" / ".cargo-checksum.json").read_text() == '{"package":"def"}'
+
+
+def test_consolidate_vendor_dirs_keeps_first_on_collision(tmp_path: Path) -> None:
+    """When two packages vendor the same crate, the first one is kept."""
+    output_dir = RootedPath(tmp_path)
+    cargo_dir = tmp_path / "deps" / "cargo"
+
+    pkg0 = cargo_dir / "0"
+    pkg1 = cargo_dir / "1"
+
+    # Same crate in both per-package dirs with different checksums
+    (pkg0 / "crate-x-1.0").mkdir(parents=True)
+    (pkg0 / "crate-x-1.0" / ".cargo-checksum.json").write_text('{"package":"registry"}')
+
+    (pkg1 / "crate-x-1.0").mkdir(parents=True)
+    (pkg1 / "crate-x-1.0" / ".cargo-checksum.json").write_text('{"package":null}')
+
+    _consolidate_vendor_dirs(output_dir, 2)
+
+    # First package's version should be preserved
+    assert (cargo_dir / "crate-x-1.0" / ".cargo-checksum.json").read_text() == (
+        '{"package":"registry"}'
+    )

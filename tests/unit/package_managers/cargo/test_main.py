@@ -15,6 +15,7 @@ from hermeto.core.package_managers.cargo.main import (
     _generate_sbom_components,
     _resolve_main_package,
     _sanitize_cargo_config,
+    _swap_sources_directory_for_subsitution_slot,
     _use_vendored_sources,
 )
 from hermeto.core.rooted_path import RootedPath
@@ -278,7 +279,7 @@ def test_use_vendored_sources(
     config_template = {
         "source": {
             "crates-io": {"replace-with": "vendored-sources"},
-            "vendored-sources": {"directory": "${output_dir}/deps/cargo"},
+            "vendored-sources": {"directory": "${output_dir}/deps/cargo/0"},
         }
     }
     cargo_dir = rooted_tmp_path.path / ".cargo"
@@ -294,7 +295,32 @@ def test_use_vendored_sources(
         assert key in result_toml, f"[{key}] section was silently dropped"
 
     assert result_toml["source"]["crates-io"]["replace-with"] == "vendored-sources"
-    assert result_toml["source"]["vendored-sources"]["directory"] == "${output_dir}/deps/cargo"
+    assert result_toml["source"]["vendored-sources"]["directory"] == "${output_dir}/deps/cargo/0"
+
+
+@pytest.mark.parametrize(
+    "package_index, expected_dir",
+    [
+        pytest.param(0, "${output_dir}/deps/cargo/0", id="first_package"),
+        pytest.param(1, "${output_dir}/deps/cargo/1", id="second_package"),
+        pytest.param(5, "${output_dir}/deps/cargo/5", id="sixth_package"),
+    ],
+)
+def test_swap_sources_directory_for_substitution_slot(
+    package_index: int, expected_dir: str
+) -> None:
+    template = textwrap.dedent("""\
+        [source.crates-io]
+        replace-with = "vendored-sources"
+
+        [source.vendored-sources]
+        directory = "/some/absolute/path/deps/cargo"
+        """)
+
+    result = _swap_sources_directory_for_subsitution_slot(template, package_index)
+
+    assert result["source"]["vendored-sources"]["directory"] == expected_dir
+    assert result["source"]["crates-io"]["replace-with"] == "vendored-sources"
 
 
 _MINIMAL_CARGO_TOML = """[package]

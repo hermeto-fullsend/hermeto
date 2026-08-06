@@ -171,16 +171,16 @@ def fetch_cargo_source(request: Request, invoked_through_pip: bool = False) -> R
     project_files: list[ProjectFile] = []
     annotations: list[Annotation] = []
 
-    for package in request.cargo_packages:
+    for package_index, package in enumerate(request.cargo_packages):
         package_dir = request.source_dir.join_within_root(package.path)
         _verify_lockfile_is_present(package_dir)
 
-        vendor_result = _fetch_dependencies(package_dir, request)
+        vendor_result = _fetch_dependencies(package_dir, request, package_index)
         # cargo allows to specify configuration per-package
         # https://doc.rust-lang.org/cargo/reference/config.html#hierarchical-structure
         if vendor_result.config_template:
             config_template = _swap_sources_directory_for_subsitution_slot(
-                vendor_result.config_template
+                vendor_result.config_template, package_index
             )
             project_files.append(_use_vendored_sources(package_dir, config_template))
         package_components = _generate_sbom_components(package_dir, request, invoked_through_pip)
@@ -221,9 +221,11 @@ def _update_permissive_mode_annotation(
     )
 
 
-def _fetch_dependencies(package_dir: RootedPath, request: Request) -> CargoVendorResult:
+def _fetch_dependencies(
+    package_dir: RootedPath, request: Request, package_index: int
+) -> CargoVendorResult:
     """Fetch cargo dependencies and return a config template for hermetic build."""
-    vendor_dir = request.output_dir.join_within_root("deps/cargo")
+    vendor_dir = request.output_dir.join_within_root(f"deps/cargo/{package_index}")
     # --locked           Assert that `Cargo.lock` will remain unchanged.
     # --versioned-dirs   Always include version in subdir name.
     # --no-delete        Don't delete older crates in the vendor directory.
@@ -613,10 +615,12 @@ def _generate_sbom_components(
     return components
 
 
-def _swap_sources_directory_for_subsitution_slot(template: str) -> dict:
+def _swap_sources_directory_for_subsitution_slot(template: str, package_index: int) -> dict:
     toml_template = tomlkit.parse(template).value
     # Absolute path has to be replaced with relative path for sources relocation to work:
-    toml_template["source"]["vendored-sources"]["directory"] = "${output_dir}/deps/cargo"
+    toml_template["source"]["vendored-sources"]["directory"] = (
+        f"${{output_dir}}/deps/cargo/{package_index}"
+    )
     # A correct output_dir value will be supplied by the application during a later stage.
     return toml_template
 

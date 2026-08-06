@@ -11,4 +11,4 @@ project_files:
     replace-with = "vendored-sources"
 
     [source.vendored-sources]
-    directory = "${output_dir}/deps/cargo"
+    directory = "${output_dir}/deps/cargo/0"
