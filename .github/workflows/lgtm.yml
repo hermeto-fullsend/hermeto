@@ -1,0 +1,15 @@
+---
+name: LGTM — approve for upstream
+on:
+  pull_request_review:
+    types: [submitted]
+
+permissions:
+  pull-requests: write
+
+jobs:
+  lgtm:
+    uses: hermeto-fullsend/workflows/.github/workflows/lgtm.yml@main
+    with:
+      upstream_repo: hermetoproject/hermeto
+    secrets: inherit
