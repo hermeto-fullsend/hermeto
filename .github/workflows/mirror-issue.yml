@@ -1,0 +1,15 @@
+name: Mirror issue
+on:
+  issues:
+    types: [opened]
+
+permissions:
+  issues: write
+
+jobs:
+  mirror:
+    uses: hermeto-fullsend/workflows/.github/workflows/mirror-issue.yml@main
+    with:
+      upstream_repo: hermetoproject/hermeto
+      mirror_issue_number: ${{ github.event.issue.number }}
+    secrets: inherit
