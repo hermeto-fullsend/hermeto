@@ -1,0 +1,12 @@
+---
+name: PR merge gate
+on:
+  pull_request:
+
+permissions:
+  pull-requests: read
+
+jobs:
+  gate:
+    uses: hermeto-fullsend/workflows/.github/workflows/pr-gate.yml@main
+    secrets: inherit
