@@ -589,16 +589,10 @@ def _create_main_module_from_parsed_data(
 ) -> Module:
     resolved_subpath = main_module_dir.subpath_from_root
 
-    if repo_name is None:
-        # PERMISSIVE mode without git repo - use the module path as resolved_path
-        resolved_path = parsed_main_module.path
-        repo_id = None
-    elif str(resolved_subpath) == ".":
-        resolved_path = repo_name
-        repo_id = get_repo_id(main_module_dir)
-    else:
-        resolved_path = f"{repo_name}/{resolved_subpath}"
-        repo_id = get_repo_id(main_module_dir)
+    # The PURL name must reflect the canonical Go module path declared in go.mod,
+    # not the git origin URL.  The vcs_url qualifier already captures provenance.
+    resolved_path = parsed_main_module.path
+    repo_id = get_repo_id(main_module_dir) if repo_name is not None else None
 
     if not parsed_main_module.version:
         # Should not happen, since the version is always resolved from the Git repo
