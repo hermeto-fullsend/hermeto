@@ -260,6 +260,23 @@ def build_hermeto_test_image(base_image: str) -> None:
     )
 
 
+def _find_rpm_repos_dir(output_dir: Path) -> Path | None:
+    """Find the first RPM repos.d directory in the hermeto output.
+
+    The RPM backend creates architecture-specific directories under
+    deps/rpm/<arch>/repos.d/. This function discovers them dynamically
+    instead of assuming a specific architecture like x86_64.
+    """
+    rpm_deps_dir = output_dir / "hermeto-output" / "deps" / "rpm"
+    if not rpm_deps_dir.is_dir():
+        return None
+    for arch_dir in sorted(rpm_deps_dir.iterdir()):
+        repos_d = arch_dir / "repos.d"
+        if repos_d.is_dir():
+            return repos_d
+    return None
+
+
 def build_image_for_test_case(
     source_dir: Path,
     output_dir: Path,
@@ -288,9 +305,8 @@ def build_image_for_test_case(
         if val := os.environ.get(build_arg):
             flags.extend(["--build-arg", f"{build_arg}={val}"])
 
-    # this should be extended to support more archs when we have the means of testing it in our CI
-    rpm_repos_path = f"{output_dir}/hermeto-output/deps/rpm/x86_64/repos.d"
-    if Path(rpm_repos_path).exists():
+    rpm_repos_path = _find_rpm_repos_dir(output_dir)
+    if rpm_repos_path is not None:
         flags.extend(
             [
                 "-v",
