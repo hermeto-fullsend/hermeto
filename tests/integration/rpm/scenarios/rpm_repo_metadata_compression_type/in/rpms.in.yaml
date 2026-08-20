@@ -4,4 +4,9 @@ contentOrigin:
       baseurl: https://cdn-ubi.redhat.com/content/public/ubi/dist/ubi/server/7/7Server/$basearch/os
 
 packages:
-  - vim 
+  - vim
+
+arches:
+  - x86_64
+  - aarch64
+
