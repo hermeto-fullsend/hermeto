@@ -1,5 +1,6 @@
 # SPDX-License-Identifier: GPL-3.0-only
 import os
+import platform
 from pathlib import Path
 
 import pytest
@@ -185,6 +186,11 @@ def test_pip_packages(
             ["python3", "/app/main.py"],
             [],
             id="pip_e2e_rust_extensions",
+            marks=pytest.mark.skipif(
+                platform.machine() not in ("x86_64", "AMD64"),
+                reason="rpms.lock.yaml pins x86_64 packages "
+                "(https://github.com/hermetoproject/hermeto/issues/1719)",
+            ),
         ),
     ],
 )

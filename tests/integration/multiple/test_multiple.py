@@ -1,4 +1,5 @@
 # SPDX-License-Identifier: GPL-3.0-only
+import platform
 from pathlib import Path
 
 import pytest
@@ -24,6 +25,11 @@ SCENARIOS_DIR = Path(__file__).parent / "scenarios"
             [],
             [],
             id="multiple_gomod_and_npm",
+            marks=pytest.mark.skipif(
+                platform.machine() not in ("x86_64", "AMD64"),
+                reason="rpms.lock.yaml pins x86_64 packages "
+                "(https://github.com/hermetoproject/hermeto/issues/1719)",
+            ),
         ),
     ],
 )

@@ -1,5 +1,6 @@
 # SPDX-License-Identifier: GPL-3.0-only
 import os
+import platform
 import re
 from configparser import ConfigParser
 from pathlib import Path
@@ -215,6 +216,11 @@ def test_repo_files(
             ["vim", "--version"],
             ["Vi IMproved 7.4"],
             id="rpm_repo_metadata_compression_type",
+            marks=pytest.mark.skipif(
+                platform.machine() not in ("x86_64", "AMD64"),
+                reason="rpms.lock.yaml pins x86_64 packages "
+                "(https://github.com/hermetoproject/hermeto/issues/1719)",
+            ),
         ),
         # Test case that checks fetching RPM files, generating repos and repofiles, building an
         # image that requires the RPM files to be installed and running the image to check if the
@@ -230,6 +236,11 @@ def test_repo_files(
             ["vim", "--version"],
             ["VIM - Vi IMproved 8.2"],
             id="rpm_e2e",
+            marks=pytest.mark.skipif(
+                platform.machine() not in ("x86_64", "AMD64"),
+                reason="rpms.lock.yaml pins x86_64 packages "
+                "(https://github.com/hermetoproject/hermeto/issues/1719)",
+            ),
         ),
         # Test case that checks fetching RPM and module metadata files, generating repos and repofiles,
         # building an image that requires the RPM files to be installed and running the image to check
@@ -245,6 +256,11 @@ def test_repo_files(
             ["ab", "-V"],
             ["This is ApacheBench, Version 2.3"],
             id="rpm_e2e_modularity",
+            marks=pytest.mark.skipif(
+                platform.machine() not in ("x86_64", "AMD64"),
+                reason="rpms.lock.yaml pins x86_64 packages "
+                "(https://github.com/hermetoproject/hermeto/issues/1719)",
+            ),
         ),
     ],
 )
