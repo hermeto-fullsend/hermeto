@@ -10,8 +10,21 @@ import pytest
 from hermeto.core.models.input import Request
 from hermeto.core.rooted_path import RootedPath
 from hermeto.core.type_aliases import StrPath
+from hermeto.core.utils import GIT_PRISTINE_ENV
 
 FileContents = str
+
+
+@pytest.fixture(autouse=True)
+def _isolate_git_config(monkeypatch: pytest.MonkeyPatch) -> None:
+    """Isolate unit tests from the developer's global git configuration.
+
+    Without this, settings like ``commit.gpgsign = true`` or
+    ``color.ui = always`` in the user's ``~/.gitconfig`` can make
+    git-reliant tests fail or produce unexpected output.
+    """
+    for key, value in GIT_PRISTINE_ENV.items():
+        monkeypatch.setenv(key, value)
 
 
 def _create_git_repo(path: Path, files: dict[StrPath, FileContents] | None = None) -> git.Repo:
