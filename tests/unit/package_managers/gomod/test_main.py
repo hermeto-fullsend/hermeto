@@ -990,6 +990,64 @@ def test_create_main_module_from_parsed_data_repo_name_none(
     assert module.version == "v1.2.3"
 
 
+@pytest.mark.parametrize(
+    "module_path, repo_name, subpath, expected_real_path",
+    [
+        pytest.param(
+            "github.com/release-engineering/retrodep/v2",
+            "github.com/hermetoproject/hermeto",
+            ".",
+            "github.com/release-engineering/retrodep/v2",
+            id="fork_root_module",
+        ),
+        pytest.param(
+            "github.com/cachito-testing/gomod-vendor-check-pass",
+            "github.com/hermetoproject/hermeto",
+            "integration-tests",
+            "github.com/cachito-testing/gomod-vendor-check-pass",
+            id="submodule_different_path",
+        ),
+        pytest.param(
+            "github.com/hermetoproject/integration-tests",
+            "github.com/hermetoproject/hermeto",
+            ".",
+            "github.com/hermetoproject/integration-tests",
+            id="same_host_different_repo",
+        ),
+    ],
+)
+@mock.patch("hermeto.core.package_managers.gomod.main.get_repo_id")
+def test_create_main_module_real_path_uses_gomod_path(
+    mock_get_repo_id: mock.Mock,
+    module_path: str,
+    repo_name: str,
+    subpath: str,
+    expected_real_path: str,
+    rooted_tmp_path: RootedPath,
+) -> None:
+    """real_path (PURL name) must come from go.mod, not from the git origin URL."""
+    mock_get_repo_id.return_value = None
+
+    if subpath == ".":
+        main_module_dir = rooted_tmp_path
+    else:
+        main_module_dir = rooted_tmp_path.join_within_root(subpath)
+        main_module_dir.path.mkdir(parents=True, exist_ok=True)
+
+    parsed_main_module = ParsedModule(path=module_path, version="v0.1.0")
+
+    module = _create_main_module_from_parsed_data(
+        main_module_dir=main_module_dir,
+        repo_name=repo_name,
+        parsed_main_module=parsed_main_module,
+    )
+
+    assert module.real_path == expected_real_path
+    assert module.name == module_path
+    assert module.main is True
+    mock_get_repo_id.assert_called_once_with(main_module_dir)
+
+
 @pytest.fixture
 def repo_remote_with_tag(rooted_tmp_path: RootedPath) -> tuple[RootedPath, RootedPath]:
     """
