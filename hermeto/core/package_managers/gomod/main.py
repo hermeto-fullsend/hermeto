@@ -1148,6 +1148,11 @@ class ModuleVersionResolver:
         uses the submodule's own repository, commit, and tags so that the
         version is derived from the submodule rather than the parent repo.
 
+        Only direct submodules of the current repository are inspected.
+        Recursively nested submodules are handled implicitly: when the
+        returned resolver itself calls ``get_golang_version``, it will
+        invoke ``_resolver_for_app_dir`` on its own submodule list.
+
         :param app_dir: the path to the module directory
         :return: self if app_dir is in the current repo, or a cached
             resolver for the containing submodule
@@ -1172,13 +1177,24 @@ class ModuleVersionResolver:
                     )
                     return self
 
-                sub_commit = sub_repo.commit(sub_repo.head.commit.hexsha)
+                try:
+                    sub_commit = sub_repo.commit(sub_repo.head.commit.hexsha)
+                except GitError:
+                    log.warning(
+                        "Submodule at %s has an invalid HEAD revision, "
+                        "version will be derived from the parent repository",
+                        submodule.path,
+                    )
+                    return self
+
                 try:
                     sub_repo.remote().fetch(refspec="+refs/tags/*:refs/tags/*", force=True)
-                except GitError:
-                    log.debug(
-                        "Could not fetch tags for submodule at %s, using locally available tags",
+                except GitError as ex:
+                    log.warning(
+                        "Could not fetch tags for submodule at %s, "
+                        "using locally available tags: %s",
                         submodule.path,
+                        ex,
                     )
 
                 self._submodule_resolvers[cache_key] = ModuleVersionResolver(sub_repo, sub_commit)
@@ -1224,6 +1240,8 @@ class ModuleVersionResolver:
         # Calculate subpath relative to the repository root, not the
         # RootedPath root — these may differ when this resolver was
         # created for a submodule whose RootedPath root is the parent.
+        # In the non-submodule case, repo_root == app_dir.root because
+        # GitRepo.__init__ requires the repository root directory.
         repo_root = Path(self._repo.working_dir).resolve()
         app_path = app_dir.path.resolve()
         if app_path == repo_root:

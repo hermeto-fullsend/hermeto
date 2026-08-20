@@ -842,6 +842,53 @@ def test_get_golang_version_from_submodule_pseudo_version(tmp_path: Path) -> Non
     )
 
 
+def test_get_golang_version_from_uninitialized_submodule_falls_back(tmp_path: Path) -> None:
+    """When a submodule is not initialized, the resolver falls back to the parent repo."""
+    # -- arrange: submodule origin --
+    sub_origin = tmp_path / "sub_origin"
+    sub_origin.mkdir()
+    sub_repo = git.Repo.init(sub_origin)
+    sub_repo.config_writer().set_value("user", "name", "test").release()
+    sub_repo.config_writer().set_value("user", "email", "test@test.com").release()
+    (sub_origin / "go.mod").write_text("module github.com/org/submod\n\ngo 1.21\n")
+    sub_repo.index.add(["go.mod"])
+    sub_repo.index.commit("Initial submodule commit")
+
+    # -- arrange: parent repo with a tag so we can detect fallback --
+    parent_dir = tmp_path / "parent"
+    parent_dir.mkdir()
+    parent_repo = git.Repo.init(parent_dir)
+    parent_repo.config_writer().set_value("user", "name", "test").release()
+    parent_repo.config_writer().set_value("user", "email", "test@test.com").release()
+    (parent_dir / "README.md").write_text("")
+    parent_repo.index.add(["README.md"])
+    parent_repo.index.commit("Initial parent commit")
+
+    parent_repo.create_submodule("submod", "submod", url=f"file://{sub_origin}")
+    parent_repo.index.commit("Add submodule")
+
+    # -- arrange: remove the submodule's .git to simulate an uninitialized submodule --
+    submod_git = parent_dir / "submod" / ".git"
+    submod_git.unlink() if submod_git.is_file() else None
+
+    # -- act --
+    parent_rooted = RootedPath(parent_dir)
+    parent_git_repo = GitRepo(parent_dir)
+    version_resolver = ModuleVersionResolver(
+        parent_git_repo, parent_git_repo.commit(parent_repo.head.commit.hexsha)
+    )
+
+    submod_dir = parent_rooted.join_within_root("submod")
+    version = version_resolver.get_golang_version("github.com/org/submod", submod_dir)
+
+    # -- assert: version must be a pseudo-version from the parent repo --
+    parent_commit_hash = parent_repo.head.commit.hexsha[:12]
+    assert parent_commit_hash in version, (
+        f"Expected fallback to parent repo but pseudo-version {version} "
+        f"does not contain the parent commit hash {parent_commit_hash}"
+    )
+
+
 def test_validate_local_replacements(tmpdir: Path) -> None:
     app_path = RootedPath(tmpdir).join_within_root("subpath")
 
