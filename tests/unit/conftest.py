@@ -22,9 +22,21 @@ def _isolate_git_config(monkeypatch: pytest.MonkeyPatch) -> None:
     Without this, settings like ``commit.gpgsign = true`` or
     ``color.ui = always`` in the user's ``~/.gitconfig`` can make
     git-reliant tests fail or produce unexpected output.
+
+    We also unconditionally set ``safe.directory = *`` via the
+    ``GIT_CONFIG_COUNT`` mechanism so that git still trusts
+    repositories whose on-disk owner differs from the process user
+    (e.g. tarball fixtures extracted as root in CI).
     """
     for key, value in GIT_PRISTINE_ENV.items():
         monkeypatch.setenv(key, value)
+
+    # Re-add safe.directory after nullifying global/system configs.
+    # In CI containers the checkout and extracted tarballs may be owned
+    # by a different UID; without this, git refuses to operate on them.
+    monkeypatch.setenv("GIT_CONFIG_COUNT", "1")
+    monkeypatch.setenv("GIT_CONFIG_KEY_0", "safe.directory")
+    monkeypatch.setenv("GIT_CONFIG_VALUE_0", "*")
 
 
 def _create_git_repo(path: Path, files: dict[StrPath, FileContents] | None = None) -> git.Repo:
