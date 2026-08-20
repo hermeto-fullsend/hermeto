@@ -1055,6 +1055,7 @@ class ModuleVersionResolver:
         """Initialize a ModuleVersionResolver for the provided Repo."""
         self._repo = repo
         self._commit = commit
+        self._submodule_resolvers: dict[str, "ModuleVersionResolver"] = {}
 
     @classmethod
     def from_repo_path(cls, repo_path: RootedPath) -> "Self":
@@ -1081,6 +1082,7 @@ class ModuleVersionResolver:
         resolver = cls.__new__(cls)
         resolver._repo = None  # type: ignore[assignment]
         resolver._commit = None  # type: ignore[assignment]
+        resolver._submodule_resolvers = {}
         return resolver
 
     @cached_property
@@ -1139,6 +1141,68 @@ class ModuleVersionResolver:
 
         return tag_names
 
+    def _resolver_for_app_dir(self, app_dir: RootedPath) -> "ModuleVersionResolver":
+        """Return a resolver scoped to the git repo containing app_dir.
+
+        When app_dir resides inside a git submodule, the returned resolver
+        uses the submodule's own repository, commit, and tags so that the
+        version is derived from the submodule rather than the parent repo.
+
+        Only direct submodules of the current repository are inspected.
+        Recursively nested submodules are handled implicitly: when the
+        returned resolver itself calls ``get_golang_version``, it will
+        invoke ``_resolver_for_app_dir`` on its own submodule list.
+
+        :param app_dir: the path to the module directory
+        :return: self if app_dir is in the current repo, or a cached
+            resolver for the containing submodule
+        """
+        if self._repo is None:
+            return self
+
+        for submodule in self._repo.submodules:
+            submodule_abs = Path(self._repo.working_dir, submodule.path).resolve()
+            if not app_dir.path.resolve().is_relative_to(submodule_abs):
+                continue
+
+            cache_key = str(submodule_abs)
+            if cache_key not in self._submodule_resolvers:
+                try:
+                    sub_repo = GitRepo(submodule_abs)
+                except NotAGitRepo:
+                    log.warning(
+                        "Submodule at %s is not initialized, "
+                        "version will be derived from the parent repository",
+                        submodule.path,
+                    )
+                    return self
+
+                try:
+                    sub_commit = sub_repo.commit(sub_repo.head.commit.hexsha)
+                except GitError:
+                    log.warning(
+                        "Submodule at %s has an invalid HEAD revision, "
+                        "version will be derived from the parent repository",
+                        submodule.path,
+                    )
+                    return self
+
+                try:
+                    sub_repo.remote().fetch(refspec="+refs/tags/*:refs/tags/*", force=True)
+                except GitError as ex:
+                    log.warning(
+                        "Could not fetch tags for submodule at %s, "
+                        "using locally available tags: %s",
+                        submodule.path,
+                        ex,
+                    )
+
+                self._submodule_resolvers[cache_key] = ModuleVersionResolver(sub_repo, sub_commit)
+
+            return self._submodule_resolvers[cache_key]
+
+        return self
+
     def get_golang_version(
         self,
         module_name: str,
@@ -1157,6 +1221,13 @@ class ModuleVersionResolver:
         if self._repo is None or self._commit is None:
             return self._DUMMY_PSEUDO_VERSION
 
+        # When the module lives inside a git submodule, delegate to a
+        # resolver scoped to the submodule's own repository so that the
+        # version is derived from the submodule's commit and tags.
+        resolver = self._resolver_for_app_dir(app_dir)
+        if resolver is not self:
+            return resolver.get_golang_version(module_name, app_dir)
+
         # If the module is version v2 or higher, the major version of the module is included as /vN at
         # the end of the module path. If the module is version v0 or v1, the major version is omitted
         # from the module path.
@@ -1166,10 +1237,17 @@ class ModuleVersionResolver:
         # If no match, prefer v1.x.x tags but fallback to v0.x.x tags if both are present
         major_versions_to_try = (module_major_version,) if module_major_version else (1, 0)
 
-        if app_dir.path == app_dir.root:
+        # Calculate subpath relative to the repository root, not the
+        # RootedPath root — these may differ when this resolver was
+        # created for a submodule whose RootedPath root is the parent.
+        # In the non-submodule case, repo_root == app_dir.root because
+        # GitRepo.__init__ requires the repository root directory.
+        repo_root = Path(self._repo.working_dir).resolve()
+        app_path = app_dir.path.resolve()
+        if app_path == repo_root:
             subpath = None
         else:
-            subpath = app_dir.path.relative_to(app_dir.root).as_posix()
+            subpath = app_path.relative_to(repo_root).as_posix()
 
         tag_on_commit = self._get_highest_semver_tag_on_current_commit(
             major_versions_to_try, subpath

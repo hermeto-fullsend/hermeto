@@ -749,6 +749,146 @@ def test_get_golang_version(
     assert version == expected
 
 
+def test_get_golang_version_from_submodule_uses_submodule_tag(tmp_path: Path) -> None:
+    """Version for a module inside a git submodule must come from the submodule's own tags.
+
+    Without this fix, the resolver would search for tags in the parent repo,
+    producing a wrong pseudo-version derived from the parent's commit.
+    """
+    # -- arrange: submodule origin with a v1.0.0 tag --
+    sub_origin = tmp_path / "sub_origin"
+    sub_origin.mkdir()
+    sub_repo = git.Repo.init(sub_origin)
+    sub_repo.config_writer().set_value("user", "name", "test").release()
+    sub_repo.config_writer().set_value("user", "email", "test@test.com").release()
+    (sub_origin / "go.mod").write_text("module github.com/org/submod\n\ngo 1.21\n")
+    sub_repo.index.add(["go.mod"])
+    sub_commit = sub_repo.index.commit("Initial submodule commit")
+    sub_repo.create_tag("v1.0.0", ref=sub_commit)
+
+    # -- arrange: parent repo (no tags, to confirm they are NOT used) --
+    parent_dir = tmp_path / "parent"
+    parent_dir.mkdir()
+    parent_repo = git.Repo.init(parent_dir)
+    parent_repo.config_writer().set_value("user", "name", "test").release()
+    parent_repo.config_writer().set_value("user", "email", "test@test.com").release()
+    (parent_dir / "README.md").write_text("")
+    parent_repo.index.add(["README.md"])
+    parent_repo.index.commit("Initial parent commit")
+
+    parent_repo.create_submodule("submod", "submod", url=f"file://{sub_origin}")
+    parent_repo.index.commit("Add submodule")
+
+    # -- act --
+    parent_rooted = RootedPath(parent_dir)
+    parent_git_repo = GitRepo(parent_dir)
+    version_resolver = ModuleVersionResolver(
+        parent_git_repo, parent_git_repo.commit(parent_repo.head.commit.hexsha)
+    )
+
+    submod_dir = parent_rooted.join_within_root("submod")
+    version = version_resolver.get_golang_version("github.com/org/submod", submod_dir)
+
+    # -- assert: version must be the submodule's tag, not a parent pseudo-version --
+    assert version == "v1.0.0", (
+        f"Expected v1.0.0 from submodule tag, got {version} (likely derived from the parent repo)"
+    )
+
+
+def test_get_golang_version_from_submodule_pseudo_version(tmp_path: Path) -> None:
+    """When no tag matches, the pseudo-version must use the submodule's commit hash."""
+    # -- arrange: submodule origin with NO tags --
+    sub_origin = tmp_path / "sub_origin"
+    sub_origin.mkdir()
+    sub_repo = git.Repo.init(sub_origin)
+    sub_repo.config_writer().set_value("user", "name", "test").release()
+    sub_repo.config_writer().set_value("user", "email", "test@test.com").release()
+    (sub_origin / "go.mod").write_text("module github.com/org/submod\n\ngo 1.21\n")
+    sub_repo.index.add(["go.mod"])
+    sub_repo.index.commit("Initial submodule commit")
+
+    # -- arrange: parent repo --
+    parent_dir = tmp_path / "parent"
+    parent_dir.mkdir()
+    parent_repo = git.Repo.init(parent_dir)
+    parent_repo.config_writer().set_value("user", "name", "test").release()
+    parent_repo.config_writer().set_value("user", "email", "test@test.com").release()
+    (parent_dir / "README.md").write_text("")
+    parent_repo.index.add(["README.md"])
+    parent_repo.index.commit("Initial parent commit")
+
+    parent_repo.create_submodule("submod", "submod", url=f"file://{sub_origin}")
+    parent_repo.index.commit("Add submodule")
+
+    # -- act --
+    parent_rooted = RootedPath(parent_dir)
+    parent_git_repo = GitRepo(parent_dir)
+    version_resolver = ModuleVersionResolver(
+        parent_git_repo, parent_git_repo.commit(parent_repo.head.commit.hexsha)
+    )
+
+    submod_dir = parent_rooted.join_within_root("submod")
+    version = version_resolver.get_golang_version("github.com/org/submod", submod_dir)
+
+    # -- assert: pseudo-version must embed the submodule's commit, not the parent's --
+    sub_commit_hash = sub_repo.head.commit.hexsha[:12]
+    parent_commit_hash = parent_repo.head.commit.hexsha[:12]
+
+    assert sub_commit_hash in version, (
+        f"Pseudo-version {version} does not contain the submodule commit hash {sub_commit_hash}"
+    )
+    assert parent_commit_hash not in version, (
+        f"Pseudo-version {version} incorrectly contains the parent commit hash {parent_commit_hash}"
+    )
+
+
+def test_get_golang_version_from_uninitialized_submodule_falls_back(tmp_path: Path) -> None:
+    """When a submodule is not initialized, the resolver falls back to the parent repo."""
+    # -- arrange: submodule origin --
+    sub_origin = tmp_path / "sub_origin"
+    sub_origin.mkdir()
+    sub_repo = git.Repo.init(sub_origin)
+    sub_repo.config_writer().set_value("user", "name", "test").release()
+    sub_repo.config_writer().set_value("user", "email", "test@test.com").release()
+    (sub_origin / "go.mod").write_text("module github.com/org/submod\n\ngo 1.21\n")
+    sub_repo.index.add(["go.mod"])
+    sub_repo.index.commit("Initial submodule commit")
+
+    # -- arrange: parent repo with a tag so we can detect fallback --
+    parent_dir = tmp_path / "parent"
+    parent_dir.mkdir()
+    parent_repo = git.Repo.init(parent_dir)
+    parent_repo.config_writer().set_value("user", "name", "test").release()
+    parent_repo.config_writer().set_value("user", "email", "test@test.com").release()
+    (parent_dir / "README.md").write_text("")
+    parent_repo.index.add(["README.md"])
+    parent_repo.index.commit("Initial parent commit")
+
+    parent_repo.create_submodule("submod", "submod", url=f"file://{sub_origin}")
+    parent_repo.index.commit("Add submodule")
+
+    # -- arrange: remove the submodule's .git to simulate an uninitialized submodule --
+    submod_git = parent_dir / "submod" / ".git"
+    submod_git.unlink() if submod_git.is_file() else None
+
+    # -- act --
+    parent_rooted = RootedPath(parent_dir)
+    parent_git_repo = GitRepo(parent_dir)
+    version_resolver = ModuleVersionResolver(
+        parent_git_repo, parent_git_repo.commit(parent_repo.head.commit.hexsha)
+    )
+
+    submod_dir = parent_rooted.join_within_root("submod")
+    version = version_resolver.get_golang_version("github.com/org/submod", submod_dir)
+
+    # -- assert: version must be a pseudo-version from the parent repo --
+    parent_commit_hash = parent_repo.head.commit.hexsha[:12]
+    assert parent_commit_hash in version, (
+        f"Expected fallback to parent repo but pseudo-version {version} "
+        f"does not contain the parent commit hash {parent_commit_hash}"
+    )
+
+
 def test_validate_local_replacements(tmpdir: Path) -> None:
     app_path = RootedPath(tmpdir).join_within_root("subpath")
 
