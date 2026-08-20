@@ -10,33 +10,31 @@ import pytest
 from hermeto.core.models.input import Request
 from hermeto.core.rooted_path import RootedPath
 from hermeto.core.type_aliases import StrPath
-from hermeto.core.utils import GIT_PRISTINE_ENV
 
 FileContents = str
 
 
 @pytest.fixture(autouse=True)
-def _isolate_git_config(monkeypatch: pytest.MonkeyPatch) -> None:
+def _isolate_git_config(monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> None:
     """Isolate unit tests from the developer's global git configuration.
 
     Without this, settings like ``commit.gpgsign = true`` or
     ``color.ui = always`` in the user's ``~/.gitconfig`` can make
     git-reliant tests fail or produce unexpected output.
 
-    We also unconditionally set ``safe.directory = *`` via the
-    ``GIT_CONFIG_COUNT`` mechanism so that git still trusts
-    repositories whose on-disk owner differs from the process user
-    (e.g. tarball fixtures extracted as root in CI).
+    Rather than pointing ``GIT_CONFIG_GLOBAL`` at ``/dev/null`` and
+    trying to re-add ``safe.directory`` via ``GIT_CONFIG_COUNT``
+    (which lands in the ``command`` scope — not always honoured for
+    security-sensitive keys), we create a minimal temporary gitconfig
+    that *only* contains ``safe.directory = *``.  This keeps the
+    setting in the ``global`` scope where git always respects it,
+    while still blocking every other developer-specific option.
     """
-    for key, value in GIT_PRISTINE_ENV.items():
-        monkeypatch.setenv(key, value)
+    fake_gitconfig = tmp_path / ".gitconfig"
+    fake_gitconfig.write_text("[safe]\n\tdirectory = *\n")
 
-    # Re-add safe.directory after nullifying global/system configs.
-    # In CI containers the checkout and extracted tarballs may be owned
-    # by a different UID; without this, git refuses to operate on them.
-    monkeypatch.setenv("GIT_CONFIG_COUNT", "1")
-    monkeypatch.setenv("GIT_CONFIG_KEY_0", "safe.directory")
-    monkeypatch.setenv("GIT_CONFIG_VALUE_0", "*")
+    monkeypatch.setenv("GIT_CONFIG_GLOBAL", str(fake_gitconfig))
+    monkeypatch.setenv("GIT_CONFIG_NOSYSTEM", "1")
 
 
 def _create_git_repo(path: Path, files: dict[StrPath, FileContents] | None = None) -> git.Repo:
