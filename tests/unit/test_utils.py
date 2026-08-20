@@ -1,8 +1,8 @@
 # SPDX-License-Identifier: GPL-3.0-only
 import errno
 import io
+import os
 import subprocess
-import sys
 from pathlib import Path
 from unittest import mock
 
@@ -92,7 +92,10 @@ def test_run_cmd_executable_not_found(
         run_cmd(["foo"], params={})
 
 
-@pytest.mark.skipif(sys.platform != "linux", reason="os.copy_file_range is only available on Linux")
+@pytest.mark.skipif(
+    not hasattr(os, "copy_file_range"),
+    reason="os.copy_file_range is not available on this platform",
+)
 @mock.patch("hermeto.core.utils._get_blocksize")
 def test_fast_copy(mock_blocksize: mock.Mock, tmp_path: Path) -> None:
     mock_blocksize.return_value = 4
@@ -109,7 +112,10 @@ def test_fast_copy(mock_blocksize: mock.Mock, tmp_path: Path) -> None:
     assert nbytes == len(test_str)
 
 
-@pytest.mark.skipif(sys.platform != "linux", reason="os.copy_file_range is only available on Linux")
+@pytest.mark.skipif(
+    not hasattr(os, "copy_file_range"),
+    reason="os.copy_file_range is not available on this platform",
+)
 @pytest.mark.parametrize(
     "errno_, expected_exc",
     [
@@ -134,7 +140,10 @@ def test_fast_copy_fail_errno(
         _fast_copy(src, dest)
 
 
-@pytest.mark.skipif(sys.platform != "linux", reason="os.copy_file_range is only available on Linux")
+@pytest.mark.skipif(
+    not hasattr(os, "copy_file_range"),
+    reason="os.copy_file_range is not available on this platform",
+)
 @mock.patch("hermeto.core.utils.open")
 def test_fast_copy_fail_io_fileno(mock_open: mock.MagicMock, tmp_path: Path) -> None:
     """Test that we correctly signal a fallback to regular copy with a irregular files."""
@@ -147,7 +156,10 @@ def test_fast_copy_fail_io_fileno(mock_open: mock.MagicMock, tmp_path: Path) -> 
         _fast_copy(tmp_path / "src/foo", tmp_path / "dest/foo")
 
 
-@pytest.mark.skipif(sys.platform != "linux", reason="os.copy_file_range is only available on Linux")
+@pytest.mark.skipif(
+    not hasattr(os, "copy_file_range"),
+    reason="os.copy_file_range is not available on this platform",
+)
 @mock.patch("os.copy_file_range")
 @mock.patch("hermeto.core.utils.open")
 def test_fast_copy_fail_no_data_copied(
@@ -163,7 +175,10 @@ def test_fast_copy_fail_no_data_copied(
         _fast_copy(tmp_path / "src/foo", tmp_path / "dest/foo")
 
 
-@pytest.mark.skipif(sys.platform != "linux", reason="os.copy_file_range is only available on Linux")
+@pytest.mark.skipif(
+    not hasattr(os, "copy_file_range"),
+    reason="os.copy_file_range is not available on this platform",
+)
 @mock.patch("shutil.copy2")
 @mock.patch("os.copy_file_range")
 def test_copy_directory(
