@@ -327,7 +327,7 @@ def _download_vcs_package(
     git_info = extract_git_info(req.direct_access_url)
 
     download_to = pip_deps_dir.join_within_root(_get_external_requirement_filepath(req))
-    download_to.path.parent.mkdir(exist_ok=True, parents=True)
+    download_to.parent.mkdir(exist_ok=True, parents=True)
 
     clone_as_tarball(git_info["url"], git_info["ref"], to_path=download_to.path)
 
@@ -361,7 +361,7 @@ def _download_url_package(
     parsed_url = urlparse.urlparse(req.direct_access_url)
 
     download_to = pip_deps_dir.join_within_root(_get_external_requirement_filepath(req))
-    download_to.path.parent.mkdir(exist_ok=True, parents=True)
+    download_to.parent.mkdir(exist_ok=True, parents=True)
 
     if parsed_url.port is not None and f"{parsed_url.hostname}:{parsed_url.port}" in trusted_hosts:
         log.debug(
@@ -493,7 +493,7 @@ def _download_dependencies(
     validate_requirements_hashes(requirements_file.requirements, require_hashes)
 
     pip_deps_dir: RootedPath = output_dir.join_within_root("deps", "pip")
-    pip_deps_dir.path.mkdir(parents=True, exist_ok=True)
+    pip_deps_dir.mkdir(parents=True, exist_ok=True)
 
     pypi_reqs: list[PipRequirement] = []
     for req in requirements_file.requirements:
@@ -553,7 +553,7 @@ def _download_from_requirement_files(
     """
     requirements: list[PipPackage] = []
     for req_file in files:
-        if not req_file.path.exists():
+        if not req_file.exists():
             raise LockfileNotFound(
                 files=req_file.path,
                 solution="Please check that you have specified correct requirements file paths",
@@ -575,7 +575,7 @@ def _default_requirement_file_list(path: RootedPath, devel: bool = False) -> lis
     """
     filename = DEFAULT_BUILD_REQUIREMENTS_FILE if devel else DEFAULT_REQUIREMENTS_FILE
     req = path.join_within_root(filename)
-    return [req] if req.path.is_file() else []
+    return [req] if req.is_file() else []
 
 
 def _resolve_pip(

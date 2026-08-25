@@ -275,7 +275,7 @@ def _resolve_main_package(package_dir: RootedPath) -> tuple[str, str | None]:
     workspace_info = parsed_toml.get("workspace", {})
 
     # use default values if the project is a virtual workspace without any package information
-    name = package_info.get("name", package_dir.path.stem)
+    name = package_info.get("name", package_dir.stem)
     version = package_info.get("version", None)
 
     # check for a workspace package version
@@ -420,8 +420,8 @@ def _sanitized_cargo_config_file(package_dir: RootedPath) -> Generator[None, Non
 
     for cfgname in all_possible_config_names:
         config = package_dir.join_within_root(cfgname)
-        if config.path.exists():
-            data = config.path.read_text()
+        if config.exists():
+            data = config.read_text()
             sanitized = _sanitize_cargo_config(data)
 
             if sanitized:
@@ -434,7 +434,7 @@ def _sanitized_cargo_config_file(package_dir: RootedPath) -> Generator[None, Non
                     continue
                 processed_paths.add(absolute_path)
                 configs_contents.append((config, data))
-                config.path.write_text(sanitized)
+                config.write_text(sanitized)
             else:
                 configs_contents.append((config, data))
                 config.path.unlink()
@@ -443,7 +443,7 @@ def _sanitized_cargo_config_file(package_dir: RootedPath) -> Generator[None, Non
     finally:
         for config, data in configs_contents:
             if data is not None:
-                config.path.write_text(data)
+                config.write_text(data)
 
 
 def _make_basic_token_from_proxy_credential(cargo_config: CargoSettings) -> str:
