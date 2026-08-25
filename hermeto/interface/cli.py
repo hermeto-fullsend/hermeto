@@ -14,13 +14,14 @@ import pydantic
 import typer
 
 from hermeto import APP_NAME
-from hermeto.core.config import get_config, set_config
+from hermeto.core.config import get_config, get_raw_config_values, set_config
 from hermeto.core.constants import Mode
 from hermeto.core.errors import BaseError, InvalidInput, UnexpectedFormat
 from hermeto.core.extras.config_show import (
     format_diff_output,
     format_yaml_output,
     get_config_diff,
+    get_config_sources,
     get_default_config,
     get_effective_config,
 )
@@ -163,9 +164,10 @@ def version_callback(value: bool) -> None:
     raise typer.Exit()
 
 
-@app.callback()
+@app.callback(invoke_without_command=True)
 @handle_errors
 def main(  # noqa: D103 -- docstring becomes part of --help message
+    ctx: typer.Context,
     version: bool = typer.Option(  # noqa: ARG001
         False,
         "--version",
@@ -200,12 +202,19 @@ def main(  # noqa: D103 -- docstring becomes part of --help message
     ),
 ) -> None:
     setup_logging(log_level, color=color)
-    if config_file:
-        config = set_config(config_file)
-    else:
-        config = get_config()
-    # Typer ensures `mode` is already a valid Mode enum value
-    config.mode = mode
+    try:
+        if config_file:
+            current_config = set_config(config_file)
+        else:
+            current_config = get_config()
+        # Typer ensures `mode` is already a valid Mode enum value
+        current_config.mode = mode
+    except BaseError:
+        # Let the config subcommand handle validation errors gracefully
+        # so it can display diagnostic output even with invalid config
+        if ctx.invoked_subcommand == "config":
+            return
+        raise
 
 
 def _if_json_then_validate(value: str) -> str:
@@ -257,6 +266,7 @@ def list_backends() -> None:
 @app.command()
 @handle_errors
 def config(
+    ctx: typer.Context,
     diff: bool = typer.Option(
         False,
         "--diff",
@@ -268,16 +278,38 @@ def config(
         help="Show sensitive values (e.g. passwords) without redaction.",
     ),
 ) -> None:
-    """Show the current effective configuration."""
-    current_config = get_config()
-    effective = get_effective_config(current_config, raw=raw)
+    """Show the current effective configuration with source annotations."""
+    config_file_path: Path | None = None
+    if ctx.parent:
+        config_file_path = ctx.parent.params.get("config_file")
+
+    validation_error: str | None = None
+    try:
+        current_config = get_config()
+        effective = get_effective_config(current_config, raw=raw)
+    except BaseError as e:
+        effective = get_raw_config_values(config_file_path)
+        validation_error = e.friendly_msg()
+
     defaults = get_default_config()
+    sources = get_config_sources(effective, config_file_path=config_file_path)
 
     if diff:
         config_diff = get_config_diff(effective, defaults)
         print(format_diff_output(config_diff))
     else:
-        print(format_yaml_output(effective, defaults))
+        print(format_yaml_output(effective, defaults, sources=sources))
+
+    if validation_error:
+        print(
+            f"\nConfiguration has validation errors:\n{validation_error}",
+            file=sys.stderr,
+        )
+        print(
+            "\nTip: review the [source] annotations above to identify which"
+            " config source provides the problematic values.",
+            file=sys.stderr,
+        )
 
 
 @app.command(help=FETCH_DEPS_HELP)

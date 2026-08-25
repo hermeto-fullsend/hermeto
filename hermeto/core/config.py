@@ -1,5 +1,6 @@
 # SPDX-License-Identifier: GPL-3.0-only
 import logging
+import os
 from pathlib import Path
 from typing import Annotated, Any
 
@@ -206,6 +207,48 @@ class CargoSettings(ProxyMixin, extra="forbid"):
         return self
 
 
+def _normalize_config_data(data: dict[str, Any]) -> dict[str, Any]:
+    """Normalize config data to the current namespaced structure.
+
+    Removes deprecated fields (with warnings) and migrates legacy flat
+    fields to their current namespaced locations.  This is a standalone
+    function so it can be reused outside model validation, e.g. when
+    loading raw config values for diagnostic display.
+
+    FIXME: Drop these normalizations and conversions on the next major release
+    """
+    _remove_gomod_strict_vendor(data)
+
+    for old_key, (namespace, new_key) in _FLAT_FIELD_MIGRATIONS:
+        if old_key in data:
+            _migrate_deprecated_field(data, old_key, data.pop(old_key), namespace, new_key)
+
+    # Migrate http.timeout -> http.read_timeout
+    http_data = data.get("http")
+    if isinstance(http_data, dict) and "timeout" in http_data:
+        _migrate_deprecated_field(
+            data,
+            "http.timeout",
+            http_data.pop("timeout"),
+            "http",
+            "read_timeout",
+        )
+
+    # default_environment_variables.gomod -> gomod.environment_variables
+    # (default_environment_variables only ever supported the gomod backend)
+    default_gomod_env_vars = data.pop("default_environment_variables", {}).get("gomod")
+    if default_gomod_env_vars is not None:
+        _migrate_deprecated_field(
+            data,
+            "default_environment_variables",
+            default_gomod_env_vars,
+            "gomod",
+            "environment_variables",
+        )
+
+    return data
+
+
 class Config(BaseSettings):
     """Singleton that provides default configuration for the application process."""
 
@@ -232,46 +275,10 @@ class Config(BaseSettings):
     @model_validator(mode="before")
     @classmethod
     def _normalize_config_structure(cls, data: Any) -> Any:
-        """Normalize config data to the new namespaced structure.
-
-        - Remove deprecated fields with warnings
-        - Migrate legacy flat fields to new namespaced structure
-
-        FIXME: Drop these normalizations and conversions on the next major release
-        """
+        """Normalize config data to the new namespaced structure."""
         if not isinstance(data, dict):
             return data
-
-        _remove_gomod_strict_vendor(data)
-
-        for old_key, (namespace, new_key) in _FLAT_FIELD_MIGRATIONS:
-            if old_key in data:
-                _migrate_deprecated_field(data, old_key, data.pop(old_key), namespace, new_key)
-
-        # Migrate http.timeout -> http.read_timeout
-        http_data = data.get("http")
-        if isinstance(http_data, dict) and "timeout" in http_data:
-            _migrate_deprecated_field(
-                data,
-                "http.timeout",
-                http_data.pop("timeout"),
-                "http",
-                "read_timeout",
-            )
-
-        # default_environment_variables.gomod -> gomod.environment_variables
-        # (default_environment_variables only ever supported the gomod backend)
-        default_gomod_env_vars = data.pop("default_environment_variables", {}).get("gomod")
-        if default_gomod_env_vars is not None:
-            _migrate_deprecated_field(
-                data,
-                "default_environment_variables",
-                default_gomod_env_vars,
-                "gomod",
-                "environment_variables",
-            )
-
-        return data
+        return _normalize_config_data(data)
 
     @classmethod
     def settings_customise_sources(
@@ -368,3 +375,74 @@ def set_config(path: Path) -> Config:
     cli_config_class = create_cli_config_class(path)
     config = cli_config_class()
     return config
+
+
+def _deep_merge(base: dict[str, Any], overlay: dict[str, Any]) -> None:
+    """Merge *overlay* into *base* in-place, recursing into nested dicts."""
+    for key, value in overlay.items():
+        if key in base and isinstance(base[key], dict) and isinstance(value, dict):
+            _deep_merge(base[key], value)
+        else:
+            base[key] = value
+
+
+def _set_nested_value(target: dict[str, Any], parts: list[str], value: Any) -> None:
+    """Set a value at a nested path in *target*.
+
+    For example, ``_set_nested_value(d, ["gomod", "proxy_url"], "x")``
+    sets ``d["gomod"]["proxy_url"] = "x"``, creating intermediate dicts
+    as needed.
+    """
+    for part in parts[:-1]:
+        target = target.setdefault(part, {})
+    if parts:
+        target[parts[-1]] = value
+
+
+def get_raw_config_values(config_path: Path | None = None) -> dict[str, Any]:
+    """Load and merge config values from all sources without model validation.
+
+    Returns a dict with default values overlaid by config file values and
+    environment variable values, in priority order.  Used by the ``config``
+    command for diagnostic display when normal validation fails.
+    """
+    # Start with schema defaults
+    result: dict[str, Any] = {}
+    for name, field in Config.model_fields.items():
+        default = field.default
+        if hasattr(type(default), "model_fields"):
+            result[name] = default.model_dump(mode="json")
+        else:
+            result[name] = default.value if hasattr(default, "value") else default
+
+    # Overlay values from default config files (ascending priority)
+    for path_str in CONFIG_FILE_PATHS:
+        path = Path(path_str).expanduser()
+        if path.exists():
+            try:
+                raw = yaml.safe_load(path.read_text())
+                if isinstance(raw, dict):
+                    _deep_merge(result, _normalize_config_data(dict(raw)))
+            except Exception:
+                log.debug("Could not read config file %s for raw merge", path_str, exc_info=True)
+                continue
+
+    # Overlay values from CLI config file
+    if config_path and config_path.exists():
+        try:
+            raw = yaml.safe_load(config_path.read_text())
+            if isinstance(raw, dict):
+                _deep_merge(result, _normalize_config_data(dict(raw)))
+        except Exception:
+            log.debug("Could not read CLI config file %s for raw merge", config_path, exc_info=True)
+
+    # Overlay values from environment variables
+    prefix = Config.model_config.get("env_prefix", "")
+    delimiter = Config.model_config.get("env_nested_delimiter") or "__"
+    for key in os.environ:
+        if key.startswith(prefix):
+            remainder = key[len(prefix) :]
+            parts = [p.lower() for p in remainder.split(delimiter)]
+            _set_nested_value(result, parts, os.environ[key])
+
+    return result
