@@ -203,7 +203,7 @@ def _configure_yarn_version(project: Project) -> semver.Version:
         project.package_json["packageManager"] = f"yarn@{yarn_path_version}"
         project.package_json.write()
 
-    _verify_corepack_yarn_version(version, project.source_dir)
+    _verify_yarn_version(version, project.source_dir)
 
     return version
 
@@ -377,12 +377,12 @@ def _generate_environment_variables() -> list[EnvironmentVariable]:
     return [EnvironmentVariable(name=key, value=value) for key, value in env_vars.items()]
 
 
-def _verify_corepack_yarn_version(expected_version: semver.Version, source_dir: RootedPath) -> None:
-    """Verify that corepack installed the correct version of yarn by checking `yarn --version`."""
+def _verify_yarn_version(expected_version: semver.Version, source_dir: RootedPath) -> None:
+    """Verify that the correct version of yarn is installed by checking `yarn --version`."""
     installed_yarn_version = extract_yarn_version_from_env(source_dir)
     if installed_yarn_version != expected_version:
         raise PackageManagerError(
-            f"{APP_NAME} expected corepack to install yarn@{expected_version} but instead "
+            f"{APP_NAME} expected to find yarn@{expected_version} but instead "
             f"found yarn@{installed_yarn_version}."
         )
 

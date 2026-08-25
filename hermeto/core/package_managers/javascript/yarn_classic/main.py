@@ -84,7 +84,7 @@ def _resolve_yarn_project(project: Project, output_dir: RootedPath) -> list[Comp
     """Process a request for a single yarn source directory."""
     log.info(f"Fetching the yarn dependencies at the subpath {project.source_dir}")
 
-    _verify_corepack_yarn_version(project.source_dir, _get_prefetch_environment_variables())
+    _verify_yarn_version(project.source_dir, _get_prefetch_environment_variables())
     _fetch_dependencies(project.source_dir, output_dir)
     packages = resolve_packages(project, output_dir.join_within_root(MIRROR_DIR))
     _verify_no_offline_mirror_collisions(packages)
@@ -232,13 +232,13 @@ def _verify_repository(project: Project) -> None:
     _reject_if_pnp_install(project)
 
 
-def _verify_corepack_yarn_version(source_dir: RootedPath, env: dict[str, str]) -> None:
-    """Verify that corepack installed the correct version of yarn by checking `yarn --version`."""
+def _verify_yarn_version(source_dir: RootedPath, env: dict[str, str]) -> None:
+    """Verify that the correct version of yarn is installed by checking `yarn --version`."""
     installed_yarn_version = extract_yarn_version_from_env(source_dir, env)
 
     if installed_yarn_version not in VersionsRange("1.22.0", "2.0.0"):
         raise PackageManagerError(
-            f"{APP_NAME} expected corepack to install yarn >=1.22.0,<2.0.0, but instead "
+            f"{APP_NAME} expected to find yarn >=1.22.0,<2.0.0, but instead "
             f"found yarn@{installed_yarn_version}."
         )
 

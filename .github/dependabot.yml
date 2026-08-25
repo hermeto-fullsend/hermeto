@@ -58,7 +58,7 @@ updates:
         update-types:
           - "version-update:semver-major"
           - "version-update:semver-minor"
-      # Node v25 stopped shipping corepack which we need
+      # Node major version bumps may need testing with corepack and yarn
       - dependency-name: "library/node"
         update-types:
           - "version-update:semver-major"
