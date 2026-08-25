@@ -153,6 +153,49 @@ class TestTopLevelOpts:
         assert "s3cret-value" in result.output
         assert "**********" not in result.output
 
+    @pytest.mark.usefixtures("_clean_hermeto_env")
+    def test_config_shows_source_annotations(self, monkeypatch: pytest.MonkeyPatch) -> None:
+        monkeypatch.setenv("HERMETO_RUNTIME__CONCURRENCY_LIMIT", "10")
+
+        config_file.config = None
+        result = invoke_expecting_sucess(app, ["config"])
+        config_file.config = None
+
+        assert "[env]" in result.output
+        assert "[default]" in result.output
+        assert "Source shown in brackets" in result.output
+
+    @pytest.mark.usefixtures("_clean_hermeto_env")
+    def test_config_with_invalid_config_shows_output(self) -> None:
+        """Config command should still produce output when validation fails."""
+        env = {
+            "HERMETO_PIP__PROXY_LOGIN": "user-without-password",
+        }
+        with mock.patch.dict(os.environ, env):
+            config_file.config = None
+            result = runner.invoke(app, ["config"])
+        config_file.config = None
+
+        # Should still produce config output (not just an error)
+        assert "pip:" in result.output
+        assert "proxy_login: user-without-password" in result.output
+        # Source annotation should identify the env var
+        assert "[env]" in result.output
+
+    @pytest.mark.usefixtures("_clean_hermeto_env")
+    def test_config_diff_with_invalid_config_shows_output(self) -> None:
+        """Config --diff should still produce output when validation fails."""
+        env = {
+            "HERMETO_PIP__PROXY_LOGIN": "user-without-password",
+        }
+        with mock.patch.dict(os.environ, env):
+            config_file.config = None
+            result = runner.invoke(app, ["config", "--diff"])
+        config_file.config = None
+
+        # Should still produce diff output showing the non-default value
+        assert "proxy_login" in result.output
+
     @pytest.mark.parametrize(
         "config_values",
         [

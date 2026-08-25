@@ -1,4 +1,6 @@
 # SPDX-License-Identifier: GPL-3.0-only
+from pathlib import Path
+
 import pytest
 import yaml
 
@@ -9,6 +11,7 @@ from hermeto.core.extras.config_show import (
     format_diff_output,
     format_yaml_output,
     get_config_diff,
+    get_config_sources,
     get_default_config,
     get_effective_config,
 )
@@ -254,3 +257,176 @@ class TestSecretStrRedaction:
         raw_output = get_effective_config(config, raw=True)
         assert default_output["gomod"]["proxy_login"] == raw_output["gomod"]["proxy_login"]
         assert default_output["gomod"]["proxy_url"] == raw_output["gomod"]["proxy_url"]
+
+
+class TestGetConfigSources:
+    """Tests for configuration source tracking."""
+
+    @pytest.mark.usefixtures("_clean_hermeto_env")
+    def test_all_defaults_when_no_overrides(self) -> None:
+        """Every field should report 'default' when nothing is overridden."""
+        config = Config()
+        effective = get_effective_config(config)
+        sources = get_config_sources(effective)
+
+        for section_name, section in sources.items():
+            if isinstance(section, dict):
+                for field_name, source in section.items():
+                    assert source == "default", (
+                        f"{section_name}.{field_name} should be 'default', got {source!r}"
+                    )
+            else:
+                assert section == "default", f"{section_name} should be 'default', got {section!r}"
+
+    @pytest.mark.usefixtures("_clean_hermeto_env")
+    def test_env_var_detected(self, monkeypatch: pytest.MonkeyPatch) -> None:
+        """An environment variable override should be reported as 'env'."""
+        monkeypatch.setenv("HERMETO_RUNTIME__CONCURRENCY_LIMIT", "10")
+        config = Config()
+        effective = get_effective_config(config)
+        sources = get_config_sources(effective)
+
+        assert isinstance(sources["runtime"], dict)
+        assert sources["runtime"]["concurrency_limit"] == "env"
+        # Other fields in the same section remain defaults
+        assert sources["runtime"]["subprocess_timeout"] == "default"
+
+    @pytest.mark.usefixtures("_clean_hermeto_env")
+    def test_config_file_detected(self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+        """Values from a YAML config file should report 'file: <path>'."""
+        config_file = tmp_path / "hermeto.yaml"
+        config_file.write_text(yaml.safe_dump({"http": {"read_timeout": 600}}))
+
+        monkeypatch.setattr(
+            "hermeto.core.extras.config_show.CONFIG_FILE_PATHS",
+            [str(config_file)],
+        )
+
+        effective = {"http": {"connect_timeout": 30, "read_timeout": 600, "max_retries": 5}}
+        sources = get_config_sources(effective)
+
+        assert isinstance(sources["http"], dict)
+        assert sources["http"]["read_timeout"] == f"file: {config_file}"
+        assert sources["http"]["connect_timeout"] == "default"
+
+    @pytest.mark.usefixtures("_clean_hermeto_env")
+    def test_env_takes_priority_over_file(
+        self,
+        tmp_path: Path,
+        monkeypatch: pytest.MonkeyPatch,
+    ) -> None:
+        """When both env var and file provide a value, env should win."""
+        config_file = tmp_path / "hermeto.yaml"
+        config_file.write_text(yaml.safe_dump({"runtime": {"concurrency_limit": 8}}))
+
+        monkeypatch.setattr(
+            "hermeto.core.extras.config_show.CONFIG_FILE_PATHS",
+            [str(config_file)],
+        )
+        monkeypatch.setenv("HERMETO_RUNTIME__CONCURRENCY_LIMIT", "10")
+
+        effective = {"runtime": {"concurrency_limit": 10, "subprocess_timeout": 3600}}
+        sources = get_config_sources(effective)
+
+        assert isinstance(sources["runtime"], dict)
+        assert sources["runtime"]["concurrency_limit"] == "env"
+
+    @pytest.mark.usefixtures("_clean_hermeto_env")
+    def test_cli_config_file_detected(self, tmp_path: Path) -> None:
+        """Values from a CLI-provided config file should report that file."""
+        cli_config = tmp_path / "custom.yaml"
+        cli_config.write_text(yaml.safe_dump({"gomod": {"download_max_tries": 10}}))
+
+        effective = {
+            "gomod": {
+                "proxy_url": "https://proxy.golang.org,direct",
+                "proxy_login": None,
+                "proxy_password": None,
+                "download_max_tries": 10,
+                "environment_variables": {},
+            },
+        }
+        sources = get_config_sources(effective, config_file_path=cli_config)
+
+        assert isinstance(sources["gomod"], dict)
+        assert sources["gomod"]["download_max_tries"] == f"file: {cli_config}"
+        assert sources["gomod"]["proxy_url"] == "default"
+
+    @pytest.mark.usefixtures("_clean_hermeto_env")
+    def test_legacy_field_migration_tracked(
+        self,
+        tmp_path: Path,
+        monkeypatch: pytest.MonkeyPatch,
+    ) -> None:
+        """Legacy flat fields in config files should be tracked after migration."""
+        config_file = tmp_path / "hermeto.yaml"
+        # Legacy field name that gets migrated to gomod.proxy_url
+        config_file.write_text(yaml.safe_dump({"goproxy_url": "https://custom.proxy"}))
+
+        monkeypatch.setattr(
+            "hermeto.core.extras.config_show.CONFIG_FILE_PATHS",
+            [str(config_file)],
+        )
+
+        effective = {
+            "gomod": {
+                "proxy_url": "https://custom.proxy",
+                "proxy_login": None,
+                "proxy_password": None,
+                "download_max_tries": 5,
+                "environment_variables": {},
+            },
+        }
+        sources = get_config_sources(effective)
+
+        assert isinstance(sources["gomod"], dict)
+        assert sources["gomod"]["proxy_url"] == f"file: {config_file}"
+
+
+class TestFormatYamlOutputWithSources:
+    """Tests for YAML output with source annotations."""
+
+    @pytest.mark.usefixtures("_clean_hermeto_env")
+    def test_source_annotations_in_output(self) -> None:
+        """Source labels should appear in comments when sources are provided."""
+        effective = {"runtime": {"concurrency_limit": 10, "subprocess_timeout": 3600}}
+        defaults = {"runtime": {"concurrency_limit": 5, "subprocess_timeout": 3600}}
+        sources = {"runtime": {"concurrency_limit": "env", "subprocess_timeout": "default"}}
+
+        output = format_yaml_output(effective, defaults, sources=sources)
+
+        assert "[env]" in output
+        assert "[default]" in output
+
+    @pytest.mark.usefixtures("_clean_hermeto_env")
+    def test_yaml_still_parseable_with_sources(self) -> None:
+        """Source annotations must not break YAML parsing."""
+        config = Config()
+        effective = get_effective_config(config)
+        defaults = get_default_config()
+        sources = get_config_sources(effective)
+
+        output = format_yaml_output(effective, defaults, sources=sources)
+        parsed = yaml.safe_load(output)
+        assert parsed == effective
+
+    @pytest.mark.usefixtures("_clean_hermeto_env")
+    def test_header_mentions_source_brackets(self) -> None:
+        """Header comment should explain the bracket notation."""
+        effective = {"mode": "strict"}
+        defaults = {"mode": "strict"}
+        sources = {"mode": "default"}
+
+        output = format_yaml_output(effective, defaults, sources=sources)
+        assert "[default]" in output
+        assert "Source shown in brackets" in output
+
+    @pytest.mark.usefixtures("_clean_hermeto_env")
+    def test_no_source_annotations_when_sources_none(self) -> None:
+        """When sources is None, output should use the legacy header."""
+        effective = {"mode": "strict"}
+        defaults = {"mode": "strict"}
+
+        output = format_yaml_output(effective, defaults, sources=None)
+        assert "[default]" not in output
+        assert "Environment variables shown in comments" in output
