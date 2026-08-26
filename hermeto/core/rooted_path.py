@@ -1,4 +1,5 @@
 # SPDX-License-Identifier: GPL-3.0-only
+import logging
 import os
 from collections.abc import Iterator
 from pathlib import Path
@@ -8,6 +9,8 @@ from pydantic_core import CoreSchema, core_schema
 
 from hermeto.core.errors import PathOutsideRoot
 from hermeto.core.type_aliases import StrPath
+
+log = logging.getLogger(__name__)
 
 RootedPathT = TypeVar("RootedPathT", bound="RootedPath")
 
@@ -200,9 +203,15 @@ class RootedPath(os.PathLike[str]):
         """Iterate over directory contents, yielding RootedPath objects.
 
         Each yielded item preserves the root boundary of this RootedPath.
+        Entries that are symlinks resolving outside the root boundary are
+        silently skipped (with a debug log message), since they cannot be
+        represented as a RootedPath under this root.
         """
         for child in self._path.iterdir():
-            yield self.join_within_root(child.name)
+            try:
+                yield self.join_within_root(child.name)
+            except PathOutsideRoot:
+                log.debug("iterdir: skipping %s (resolves outside root %s)", child, self._root)
 
     def read_text(self, encoding: str | None = None, errors: str | None = None) -> str:
         """Read the file contents as a string."""

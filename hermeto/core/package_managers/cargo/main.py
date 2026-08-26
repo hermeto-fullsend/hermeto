@@ -427,7 +427,7 @@ def _sanitized_cargo_config_file(package_dir: RootedPath) -> Generator[None, Non
             if sanitized:
                 absolute_path = (
                     config.path.readlink().absolute()
-                    if config.path.is_symlink()
+                    if config.is_symlink()
                     else config.path.absolute()
                 )
                 if absolute_path in processed_paths:

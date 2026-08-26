@@ -220,6 +220,17 @@ def test_iterdir_returns_rooted_paths(tmp_path: Path) -> None:
     assert names == ["a", "b"]
 
 
+def test_iterdir_skips_symlinks_outside_root(tmp_path: Path) -> None:
+    (tmp_path / "regular").touch()
+    (tmp_path / "escape").symlink_to("/")
+    rp = RootedPath(tmp_path)
+    results = list(rp.iterdir())
+    names = sorted(r.name for r in results)
+    # The symlink resolving outside root should be silently skipped
+    assert "escape" not in names
+    assert "regular" in names
+
+
 def test_read_text(tmp_path: Path) -> None:
     (tmp_path / "hello.txt").write_text("world")
     rp = RootedPath(tmp_path)
