@@ -6,11 +6,11 @@ corresponding environment variable names, compute differences against
 default values, and determine which source provided each value.
 """
 
-import os
 from pathlib import Path
 from typing import Any
 
 import yaml
+from pydantic_settings import EnvSettingsSource, YamlConfigSettingsSource
 
 from hermeto.core.config import CONFIG_FILE_PATHS, Config, normalize_config_data
 
@@ -118,9 +118,9 @@ def get_config_sources(
 ) -> ConfigSources:
     """Determine which source provided each effective config value.
 
-    Checks sources in descending priority order (environment variables
-    first, then config files, then schema defaults) and returns a nested
-    dict that mirrors the structure of *effective* with source label
+    Uses pydantic-settings source objects to discover which fields were
+    provided by environment variables or YAML config files, then returns a
+    nested dict that mirrors the structure of *effective* with source label
     strings at the leaves.
 
     Source labels:
@@ -133,41 +133,32 @@ def get_config_sources(
     >>> sources["runtime"]["concurrency_limit"]
     'default'
     """
-    # --- environment variables -------------------------------------------------
-    prefix = Config.model_config.get("env_prefix") or ""
-    delimiter = Config.model_config.get("env_nested_delimiter") or "__"
-    known_sections = set(Config.model_fields)
+    # --- environment variables (via pydantic-settings EnvSettingsSource) --------
     env_fields: dict[tuple[str, ...], str] = {}
-    for key in os.environ:
-        if key.startswith(prefix):
-            remainder = key[len(prefix) :]
-            parts = tuple(p.lower() for p in remainder.split(delimiter))
-            if parts and parts[0] not in known_sections:
-                continue
-            env_fields[parts] = key
+    env_data = EnvSettingsSource(Config)()
+    if env_data:
+        _collect_fields_from_dict(env_data, "env", env_fields)
 
-    # --- config files (ascending priority, later entries overwrite earlier) -----
+    # --- config files (via pydantic-settings YamlConfigSettingsSource) ---------
     file_fields: dict[tuple[str, ...], str] = {}
     for path_str in CONFIG_FILE_PATHS:
         path = Path(path_str).expanduser()
-        if path.exists():
-            try:
-                raw = yaml.safe_load(path.read_text())
-                if isinstance(raw, dict):
-                    normalized = normalize_config_data(dict(raw))
-                    _collect_fields_from_dict(normalized, path_str, file_fields)
-            except Exception:  # noqa: S112
-                # Skip unreadable files; the main Config() path will report them
-                continue
-
-    if config_file_path and config_file_path.exists():
         try:
-            raw = yaml.safe_load(config_file_path.read_text())
-            if isinstance(raw, dict):
-                normalized = normalize_config_data(dict(raw))
-                _collect_fields_from_dict(normalized, str(config_file_path), file_fields)
+            data = YamlConfigSettingsSource(Config, yaml_file=path)()
+        except Exception:  # noqa: S112
+            continue
+        if data:
+            normalized = normalize_config_data(dict(data))
+            _collect_fields_from_dict(normalized, path_str, file_fields)
+
+    if config_file_path:
+        try:
+            data = YamlConfigSettingsSource(Config, yaml_file=config_file_path)()
         except Exception:  # noqa: S110
-            pass  # Skip unreadable CLI config; the main Config() path will report it
+            data = {}
+        if data:
+            normalized = normalize_config_data(dict(data))
+            _collect_fields_from_dict(normalized, str(config_file_path), file_fields)
 
     # --- walk effective config and assign sources ------------------------------
     def _walk(

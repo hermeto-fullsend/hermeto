@@ -1,6 +1,5 @@
 # SPDX-License-Identifier: GPL-3.0-only
 import logging
-import os
 from pathlib import Path
 from typing import Annotated, Any
 
@@ -18,6 +17,7 @@ from pydantic import (
 from pydantic_core import ErrorDetails
 from pydantic_settings import (
     BaseSettings,
+    EnvSettingsSource,
     PydanticBaseSettingsSource,
     SettingsConfigDict,
     YamlConfigSettingsSource,
@@ -386,25 +386,13 @@ def _deep_merge(base: dict[str, Any], overlay: dict[str, Any]) -> None:
             base[key] = value
 
 
-def _set_nested_value(target: dict[str, Any], parts: list[str], value: Any) -> None:
-    """Set a value at a nested path in *target*.
-
-    For example, ``_set_nested_value(d, ["gomod", "proxy_url"], "x")``
-    sets ``d["gomod"]["proxy_url"] = "x"``, creating intermediate dicts
-    as needed.
-    """
-    for part in parts[:-1]:
-        target = target.setdefault(part, {})
-    if parts:
-        target[parts[-1]] = value
-
-
 def get_raw_config_values(config_path: Path | None = None) -> dict[str, Any]:
     """Load and merge config values from all sources without model validation.
 
-    Returns a dict with default values overlaid by config file values and
-    environment variable values, in priority order.  Used by the ``config``
-    command for diagnostic display when normal validation fails.
+    Uses pydantic-settings source objects to read environment variables and
+    YAML config files, then merges them with schema defaults in priority
+    order.  Used by the ``config`` command for diagnostic display when
+    normal validation fails.
     """
     # Start with schema defaults
     result: dict[str, Any] = {}
@@ -418,47 +406,53 @@ def get_raw_config_values(config_path: Path | None = None) -> dict[str, Any]:
     # Overlay values from default config files (ascending priority)
     for path_str in CONFIG_FILE_PATHS:
         path = Path(path_str).expanduser()
-        if path.exists():
-            try:
-                raw = yaml.safe_load(path.read_text())
-                if isinstance(raw, dict):
-                    _deep_merge(result, normalize_config_data(dict(raw)))
-            except Exception:
-                log.debug("Could not read config file %s for raw merge", path_str, exc_info=True)
-                continue
+        try:
+            data = YamlConfigSettingsSource(Config, yaml_file=path)()
+        except Exception:
+            log.debug("Could not read config file %s for raw merge", path_str, exc_info=True)
+            continue
+        if data:
+            _deep_merge(result, normalize_config_data(dict(data)))
 
     # Overlay values from CLI config file
-    if config_path and config_path.exists():
+    if config_path:
         try:
-            raw = yaml.safe_load(config_path.read_text())
-            if isinstance(raw, dict):
-                _deep_merge(result, normalize_config_data(dict(raw)))
+            data = YamlConfigSettingsSource(Config, yaml_file=config_path)()
         except Exception:
             log.debug("Could not read CLI config file %s for raw merge", config_path, exc_info=True)
+            data = {}
+        if data:
+            _deep_merge(result, normalize_config_data(dict(data)))
 
-    # Overlay values from environment variables, filtering to known top-level
-    # config sections so test-harness vars (e.g. HERMETO_TEST_*) don't leak in
-    prefix = Config.model_config.get("env_prefix", "")
-    delimiter = Config.model_config.get("env_nested_delimiter") or "__"
-    known_sections = set(Config.model_fields)
-    for key in os.environ:
-        if key.startswith(prefix):
-            remainder = key[len(prefix) :]
-            parts = [p.lower() for p in remainder.split(delimiter)]
-            if parts and parts[0] not in known_sections:
-                continue
-            _set_nested_value(result, parts, _coerce_env_value(os.environ[key]))
+    # Overlay values from environment variables via pydantic-settings
+    env_data = EnvSettingsSource(Config)()
+    if env_data:
+        _deep_merge(result, _coerce_leaf_strings(env_data))
 
     return result
 
 
-def _coerce_env_value(value: str) -> Any:
-    """Best-effort coercion of env var string to a native Python type.
+def _coerce_leaf_strings(data: dict[str, Any]) -> dict[str, Any]:
+    """Coerce string leaf values in a nested dict to native Python types.
 
-    Attempts int, float, bool, and null conversions so that raw config
-    values align with the types used by schema defaults, preventing
+    Environment variable values arrive as strings from pydantic-settings'
+    ``EnvSettingsSource``.  This converts them to int, float, bool, or None
+    so that raw config values align with schema default types, preventing
     spurious diff markers in diagnostic output.
     """
+    result: dict[str, Any] = {}
+    for key, value in data.items():
+        if isinstance(value, dict):
+            result[key] = _coerce_leaf_strings(value)
+        elif isinstance(value, str):
+            result[key] = _coerce_scalar(value)
+        else:
+            result[key] = value
+    return result
+
+
+def _coerce_scalar(value: str) -> Any:
+    """Best-effort coercion of a string to a native Python type."""
     if value.lower() in ("true", "false"):
         return value.lower() == "true"
     if value.lower() == "null" or value == "":
