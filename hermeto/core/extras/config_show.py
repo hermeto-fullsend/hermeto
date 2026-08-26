@@ -12,9 +12,9 @@ from typing import Any
 
 import yaml
 
-from hermeto.core.config import CONFIG_FILE_PATHS, Config, _normalize_config_data
+from hermeto.core.config import CONFIG_FILE_PATHS, Config, normalize_config_data
 
-# Type aliases for configuration diff structures.
+# Type aliases for configuration diff and source-tracking structures.
 ConfigValue = str | int | float | bool | None | dict[str, Any] | list[Any]
 FieldDiff = tuple[ConfigValue, ConfigValue]  # (current_value, default_value)
 # Recursive: a section maps field names to FieldDiffs, or to further nested sections.
@@ -136,11 +136,14 @@ def get_config_sources(
     # --- environment variables -------------------------------------------------
     prefix = Config.model_config.get("env_prefix") or ""
     delimiter = Config.model_config.get("env_nested_delimiter") or "__"
+    known_sections = set(Config.model_fields)
     env_fields: dict[tuple[str, ...], str] = {}
     for key in os.environ:
         if key.startswith(prefix):
             remainder = key[len(prefix) :]
             parts = tuple(p.lower() for p in remainder.split(delimiter))
+            if parts and parts[0] not in known_sections:
+                continue
             env_fields[parts] = key
 
     # --- config files (ascending priority, later entries overwrite earlier) -----
@@ -151,7 +154,7 @@ def get_config_sources(
             try:
                 raw = yaml.safe_load(path.read_text())
                 if isinstance(raw, dict):
-                    normalized = _normalize_config_data(dict(raw))
+                    normalized = normalize_config_data(dict(raw))
                     _collect_fields_from_dict(normalized, path_str, file_fields)
             except Exception:  # noqa: S112
                 # Skip unreadable files; the main Config() path will report them
@@ -161,7 +164,7 @@ def get_config_sources(
         try:
             raw = yaml.safe_load(config_file_path.read_text())
             if isinstance(raw, dict):
-                normalized = _normalize_config_data(dict(raw))
+                normalized = normalize_config_data(dict(raw))
                 _collect_fields_from_dict(normalized, str(config_file_path), file_fields)
         except Exception:  # noqa: S110
             pass  # Skip unreadable CLI config; the main Config() path will report it

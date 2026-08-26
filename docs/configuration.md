@@ -47,7 +47,12 @@ Hermeto only supports YAML config files.
 
 Use `hermeto config` to display the effective configuration after all sources
 have been merged. Each field is annotated with its corresponding environment
-variable name, and values that differ from defaults are marked with `(*)`.
+variable name, values that differ from defaults are marked with `(*)`, and the
+source that provided each value is shown in brackets:
+
+- `[default]` — schema default
+- `[env]` — set via an environment variable
+- `[file: <path>]` — read from a YAML config file
 
 ```shell
 hermeto config
@@ -65,6 +70,11 @@ them, pass `--raw`:
 ```shell
 hermeto config --raw
 ```
+
+If the configuration has validation errors (for example, `proxy_login` is set
+without `proxy_password`), `hermeto config` still displays the merged raw
+values with source annotations and prints the validation errors to stderr.
+This helps diagnose which source is providing the problematic values.
 
 ## Settings
 

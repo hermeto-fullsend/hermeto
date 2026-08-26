@@ -207,7 +207,7 @@ class CargoSettings(ProxyMixin, extra="forbid"):
         return self
 
 
-def _normalize_config_data(data: dict[str, Any]) -> dict[str, Any]:
+def normalize_config_data(data: dict[str, Any]) -> dict[str, Any]:
     """Normalize config data to the current namespaced structure.
 
     Removes deprecated fields (with warnings) and migrates legacy flat
@@ -278,7 +278,7 @@ class Config(BaseSettings):
         """Normalize config data to the new namespaced structure."""
         if not isinstance(data, dict):
             return data
-        return _normalize_config_data(data)
+        return normalize_config_data(data)
 
     @classmethod
     def settings_customise_sources(
@@ -422,7 +422,7 @@ def get_raw_config_values(config_path: Path | None = None) -> dict[str, Any]:
             try:
                 raw = yaml.safe_load(path.read_text())
                 if isinstance(raw, dict):
-                    _deep_merge(result, _normalize_config_data(dict(raw)))
+                    _deep_merge(result, normalize_config_data(dict(raw)))
             except Exception:
                 log.debug("Could not read config file %s for raw merge", path_str, exc_info=True)
                 continue
@@ -432,17 +432,43 @@ def get_raw_config_values(config_path: Path | None = None) -> dict[str, Any]:
         try:
             raw = yaml.safe_load(config_path.read_text())
             if isinstance(raw, dict):
-                _deep_merge(result, _normalize_config_data(dict(raw)))
+                _deep_merge(result, normalize_config_data(dict(raw)))
         except Exception:
             log.debug("Could not read CLI config file %s for raw merge", config_path, exc_info=True)
 
-    # Overlay values from environment variables
+    # Overlay values from environment variables, filtering to known top-level
+    # config sections so test-harness vars (e.g. HERMETO_TEST_*) don't leak in
     prefix = Config.model_config.get("env_prefix", "")
     delimiter = Config.model_config.get("env_nested_delimiter") or "__"
+    known_sections = set(Config.model_fields)
     for key in os.environ:
         if key.startswith(prefix):
             remainder = key[len(prefix) :]
             parts = [p.lower() for p in remainder.split(delimiter)]
-            _set_nested_value(result, parts, os.environ[key])
+            if parts and parts[0] not in known_sections:
+                continue
+            _set_nested_value(result, parts, _coerce_env_value(os.environ[key]))
 
     return result
+
+
+def _coerce_env_value(value: str) -> Any:
+    """Best-effort coercion of env var string to a native Python type.
+
+    Attempts int, float, bool, and null conversions so that raw config
+    values align with the types used by schema defaults, preventing
+    spurious diff markers in diagnostic output.
+    """
+    if value.lower() in ("true", "false"):
+        return value.lower() == "true"
+    if value.lower() == "null" or value == "":
+        return None
+    try:
+        return int(value)
+    except ValueError:
+        pass
+    try:
+        return float(value)
+    except ValueError:
+        pass
+    return value

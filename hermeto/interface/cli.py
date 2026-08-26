@@ -164,6 +164,9 @@ def version_callback(value: bool) -> None:
     raise typer.Exit()
 
 
+# invoke_without_command=True is needed so that the callback can catch and
+# suppress validation errors when the config subcommand is invoked -- without
+# it, Typer would not call the callback at all when a subcommand is present.
 @app.callback(invoke_without_command=True)
 @handle_errors
 def main(  # noqa: D103 -- docstring becomes part of --help message
@@ -263,6 +266,21 @@ def list_backends() -> None:
         print("Experimental:", ", ".join(experimental))
 
 
+# Fields that use SecretStr in the pydantic model and must be redacted
+# when displaying raw (non-validated) config values.
+_SENSITIVE_FIELD_NAMES = frozenset({"proxy_password"})
+_REDACTED_VALUE = "**********"
+
+
+def _redact_sensitive_fields(data: dict[str, Any]) -> None:
+    """Replace known sensitive values with a redaction marker in-place."""
+    for key, value in data.items():
+        if isinstance(value, dict):
+            _redact_sensitive_fields(value)
+        elif key in _SENSITIVE_FIELD_NAMES and value is not None:
+            data[key] = _REDACTED_VALUE
+
+
 @app.command()
 @handle_errors
 def config(
@@ -289,6 +307,8 @@ def config(
         effective = get_effective_config(current_config, raw=raw)
     except BaseError as e:
         effective = get_raw_config_values(config_file_path)
+        if not raw:
+            _redact_sensitive_fields(effective)
         validation_error = e.friendly_msg()
 
     defaults = get_default_config()
