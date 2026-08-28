@@ -18,7 +18,7 @@ from hermeto.core.package_managers.javascript.yarn.main import (
     _resolve_yarn_project,
     _set_yarnrc_configuration,
     _strip_workspace_scripts,
-    _verify_corepack_yarn_version,
+    _verify_yarn_version,
     _verify_yarnrc_paths,
 )
 from hermeto.core.package_managers.javascript.yarn.project import PackageJson, YarnRc
@@ -92,7 +92,7 @@ plugins:
         ),
     ],
 )
-@mock.patch("hermeto.core.package_managers.javascript.yarn.main._verify_corepack_yarn_version")
+@mock.patch("hermeto.core.package_managers.javascript.yarn.main._verify_yarn_version")
 @mock.patch("hermeto.core.package_managers.javascript.yarn.main.get_semver_from_package_manager")
 @mock.patch("hermeto.core.package_managers.javascript.yarn.main.get_semver_from_yarn_path")
 @mock.patch("hermeto.core.package_managers.javascript.yarn.project.PackageJson.write")
@@ -100,7 +100,7 @@ def test_configure_yarn_version(
     mock_package_json_write: mock.Mock,
     mock_yarn_path_semver: mock.Mock,
     mock_package_manager_semver: mock.Mock,
-    mock_verify_corepack: mock.Mock,
+    mock_verify_yarn: mock.Mock,
     yarn_path_version: semver.version.Version | None,
     package_manager_version: semver.version.Version | None,
 ) -> None:
@@ -119,29 +119,29 @@ def test_configure_yarn_version(
         assert mock_project.package_json.get("packageManager") is None
         mock_package_json_write.assert_not_called()
 
-    mock_verify_corepack.assert_called_once_with(
+    mock_verify_yarn.assert_called_once_with(
         yarn_path_version or package_manager_version, mock_project.source_dir
     )
 
 
 @pytest.mark.parametrize(
-    "corepack_yarn_version",
+    "installed_yarn_version",
     [
         pytest.param("2.0.0", id="yarn_versions_do_not_match"),
         pytest.param("2", id="invalid_semver"),
     ],
 )
 @mock.patch("hermeto.core.package_managers.javascript.yarn.utils.run_yarn_cmd")
-def test_corepack_installed_correct_yarn_version_fail(
+def test_verify_yarn_version_fail(
     mock_run_yarn_cmd: mock.Mock,
-    corepack_yarn_version: str,
+    installed_yarn_version: str,
     rooted_tmp_path: RootedPath,
 ) -> None:
     expected_yarn_version = YarnVersions.YARN_V1.value
-    mock_run_yarn_cmd.return_value = corepack_yarn_version
+    mock_run_yarn_cmd.return_value = installed_yarn_version
 
     with pytest.raises(PackageManagerError):
-        _verify_corepack_yarn_version(expected_yarn_version, rooted_tmp_path)
+        _verify_yarn_version(expected_yarn_version, rooted_tmp_path)
 
     mock_run_yarn_cmd.assert_called_once_with(
         ["--version"],
