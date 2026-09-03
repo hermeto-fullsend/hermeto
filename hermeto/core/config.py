@@ -17,6 +17,7 @@ from pydantic import (
 from pydantic_core import ErrorDetails
 from pydantic_settings import (
     BaseSettings,
+    EnvSettingsSource,
     PydanticBaseSettingsSource,
     SettingsConfigDict,
     YamlConfigSettingsSource,
@@ -206,6 +207,48 @@ class CargoSettings(ProxyMixin, extra="forbid"):
         return self
 
 
+def normalize_config_data(data: dict[str, Any]) -> dict[str, Any]:
+    """Normalize config data to the current namespaced structure.
+
+    Removes deprecated fields (with warnings) and migrates legacy flat
+    fields to their current namespaced locations.  This is a standalone
+    function so it can be reused outside model validation, e.g. when
+    loading raw config values for diagnostic display.
+
+    FIXME: Drop these normalizations and conversions on the next major release
+    """
+    _remove_gomod_strict_vendor(data)
+
+    for old_key, (namespace, new_key) in _FLAT_FIELD_MIGRATIONS:
+        if old_key in data:
+            _migrate_deprecated_field(data, old_key, data.pop(old_key), namespace, new_key)
+
+    # Migrate http.timeout -> http.read_timeout
+    http_data = data.get("http")
+    if isinstance(http_data, dict) and "timeout" in http_data:
+        _migrate_deprecated_field(
+            data,
+            "http.timeout",
+            http_data.pop("timeout"),
+            "http",
+            "read_timeout",
+        )
+
+    # default_environment_variables.gomod -> gomod.environment_variables
+    # (default_environment_variables only ever supported the gomod backend)
+    default_gomod_env_vars = data.pop("default_environment_variables", {}).get("gomod")
+    if default_gomod_env_vars is not None:
+        _migrate_deprecated_field(
+            data,
+            "default_environment_variables",
+            default_gomod_env_vars,
+            "gomod",
+            "environment_variables",
+        )
+
+    return data
+
+
 class Config(BaseSettings):
     """Singleton that provides default configuration for the application process."""
 
@@ -232,46 +275,10 @@ class Config(BaseSettings):
     @model_validator(mode="before")
     @classmethod
     def _normalize_config_structure(cls, data: Any) -> Any:
-        """Normalize config data to the new namespaced structure.
-
-        - Remove deprecated fields with warnings
-        - Migrate legacy flat fields to new namespaced structure
-
-        FIXME: Drop these normalizations and conversions on the next major release
-        """
+        """Normalize config data to the new namespaced structure."""
         if not isinstance(data, dict):
             return data
-
-        _remove_gomod_strict_vendor(data)
-
-        for old_key, (namespace, new_key) in _FLAT_FIELD_MIGRATIONS:
-            if old_key in data:
-                _migrate_deprecated_field(data, old_key, data.pop(old_key), namespace, new_key)
-
-        # Migrate http.timeout -> http.read_timeout
-        http_data = data.get("http")
-        if isinstance(http_data, dict) and "timeout" in http_data:
-            _migrate_deprecated_field(
-                data,
-                "http.timeout",
-                http_data.pop("timeout"),
-                "http",
-                "read_timeout",
-            )
-
-        # default_environment_variables.gomod -> gomod.environment_variables
-        # (default_environment_variables only ever supported the gomod backend)
-        default_gomod_env_vars = data.pop("default_environment_variables", {}).get("gomod")
-        if default_gomod_env_vars is not None:
-            _migrate_deprecated_field(
-                data,
-                "default_environment_variables",
-                default_gomod_env_vars,
-                "gomod",
-                "environment_variables",
-            )
-
-        return data
+        return normalize_config_data(data)
 
     @classmethod
     def settings_customise_sources(
@@ -368,3 +375,94 @@ def set_config(path: Path) -> Config:
     cli_config_class = create_cli_config_class(path)
     config = cli_config_class()
     return config
+
+
+def _deep_merge(base: dict[str, Any], overlay: dict[str, Any]) -> None:
+    """Merge *overlay* into *base* in-place, recursing into nested dicts."""
+    for key, value in overlay.items():
+        if key in base and isinstance(base[key], dict) and isinstance(value, dict):
+            _deep_merge(base[key], value)
+        else:
+            base[key] = value
+
+
+def get_raw_config_values(config_path: Path | None = None) -> dict[str, Any]:
+    """Load and merge config values from all sources without model validation.
+
+    Uses pydantic-settings source objects to read environment variables and
+    YAML config files, then merges them with schema defaults in priority
+    order.  Used by the ``config`` command for diagnostic display when
+    normal validation fails.
+    """
+    # Start with schema defaults
+    result: dict[str, Any] = {}
+    for name, field in Config.model_fields.items():
+        default = field.default
+        if hasattr(type(default), "model_fields"):
+            result[name] = default.model_dump(mode="json")
+        else:
+            result[name] = default.value if hasattr(default, "value") else default
+
+    # Overlay values from default config files (ascending priority)
+    for path_str in CONFIG_FILE_PATHS:
+        path = Path(path_str).expanduser()
+        try:
+            data = YamlConfigSettingsSource(Config, yaml_file=path)()
+        except Exception:
+            log.debug("Could not read config file %s for raw merge", path_str, exc_info=True)
+            continue
+        if data:
+            _deep_merge(result, normalize_config_data(dict(data)))
+
+    # Overlay values from CLI config file
+    if config_path:
+        try:
+            data = YamlConfigSettingsSource(Config, yaml_file=config_path)()
+        except Exception:
+            log.debug("Could not read CLI config file %s for raw merge", config_path, exc_info=True)
+            data = {}
+        if data:
+            _deep_merge(result, normalize_config_data(dict(data)))
+
+    # Overlay values from environment variables via pydantic-settings
+    env_data = EnvSettingsSource(Config)()
+    if env_data:
+        _deep_merge(result, _coerce_leaf_strings(env_data))
+
+    return result
+
+
+def _coerce_leaf_strings(data: dict[str, Any]) -> dict[str, Any]:
+    """Coerce string leaf values in a nested dict to native Python types.
+
+    Environment variable values arrive as strings from pydantic-settings'
+    ``EnvSettingsSource``.  This converts them to int, float, bool, or None
+    so that raw config values align with schema default types, preventing
+    spurious diff markers in diagnostic output.
+    """
+    result: dict[str, Any] = {}
+    for key, value in data.items():
+        if isinstance(value, dict):
+            result[key] = _coerce_leaf_strings(value)
+        elif isinstance(value, str):
+            result[key] = _coerce_scalar(value)
+        else:
+            result[key] = value
+    return result
+
+
+def _coerce_scalar(value: str) -> Any:
+    """Best-effort coercion of a string to a native Python type."""
+    if value.lower() in ("true", "false"):
+        return value.lower() == "true"
+    if value.lower() == "null" or value == "":
+        return None
+    try:
+        return int(value)
+    except ValueError:
+        pass
+    try:
+        return float(value)
+    except ValueError:
+        pass
+    return value

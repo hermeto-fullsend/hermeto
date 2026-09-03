@@ -2,21 +2,26 @@
 """Configuration introspection utilities.
 
 Provides functions to dump the current effective configuration, generate
-corresponding environment variable names, and compute differences against
-default values.
+corresponding environment variable names, compute differences against
+default values, and determine which source provided each value.
 """
 
+from pathlib import Path
 from typing import Any
 
 import yaml
+from pydantic_settings import EnvSettingsSource, YamlConfigSettingsSource
 
-from hermeto.core.config import Config
+from hermeto.core.config import CONFIG_FILE_PATHS, Config, normalize_config_data
 
-# Type aliases for configuration diff structures.
+# Type aliases for configuration diff and source-tracking structures.
 ConfigValue = str | int | float | bool | None | dict[str, Any] | list[Any]
 FieldDiff = tuple[ConfigValue, ConfigValue]  # (current_value, default_value)
 # Recursive: a section maps field names to FieldDiffs, or to further nested sections.
 ConfigDiff = dict[str, "FieldDiff | ConfigDiff"]
+
+# Recursive: leaf values are source label strings, nested dicts mirror config structure.
+ConfigSources = dict[str, "str | ConfigSources"]
 
 
 def _get_env_var_name(*parts: str) -> str:
@@ -89,25 +94,132 @@ def get_config_diff(
     return diff
 
 
+def _collect_fields_from_dict(
+    data: dict[str, Any],
+    label: str,
+    result: dict[tuple[str, ...], str],
+    prefix: tuple[str, ...] = (),
+) -> None:
+    """Recursively collect leaf-field paths from a nested dict.
+
+    Each leaf is recorded as ``result[path_tuple] = label``.
+    """
+    for key, value in data.items():
+        current = prefix + (key,)
+        if isinstance(value, dict):
+            _collect_fields_from_dict(value, label, result, current)
+        else:
+            result[current] = label
+
+
+def get_config_sources(
+    effective: dict[str, Any],
+    config_file_path: Path | None = None,
+) -> ConfigSources:
+    """Determine which source provided each effective config value.
+
+    Uses pydantic-settings source objects to discover which fields were
+    provided by environment variables or YAML config files, then returns a
+    nested dict that mirrors the structure of *effective* with source label
+    strings at the leaves.
+
+    Source labels:
+
+    * ``"default"`` -- the value comes from the schema default.
+    * ``"env"`` -- the value was set via an environment variable.
+    * ``"file: <path>"`` -- the value was read from a YAML config file.
+
+    >>> sources = get_config_sources({"runtime": {"concurrency_limit": 5}})
+    >>> sources["runtime"]["concurrency_limit"]
+    'default'
+    """
+    # --- environment variables (via pydantic-settings EnvSettingsSource) --------
+    env_fields: dict[tuple[str, ...], str] = {}
+    env_data = EnvSettingsSource(Config)()
+    if env_data:
+        _collect_fields_from_dict(env_data, "env", env_fields)
+
+    # --- config files (via pydantic-settings YamlConfigSettingsSource) ---------
+    file_fields: dict[tuple[str, ...], str] = {}
+    for path_str in CONFIG_FILE_PATHS:
+        path = Path(path_str).expanduser()
+        try:
+            data = YamlConfigSettingsSource(Config, yaml_file=path)()
+        except Exception:  # noqa: S112
+            continue
+        if data:
+            normalized = normalize_config_data(dict(data))
+            _collect_fields_from_dict(normalized, path_str, file_fields)
+
+    if config_file_path:
+        try:
+            data = YamlConfigSettingsSource(Config, yaml_file=config_file_path)()
+        except Exception:  # noqa: S110
+            data = {}
+        if data:
+            normalized = normalize_config_data(dict(data))
+            _collect_fields_from_dict(normalized, str(config_file_path), file_fields)
+
+    # --- walk effective config and assign sources ------------------------------
+    def _walk(
+        data: dict[str, Any],
+        path: tuple[str, ...],
+    ) -> ConfigSources:
+        sources: ConfigSources = {}
+        for key, value in data.items():
+            current = path + (key,)
+            # Non-empty dicts are config sections; recurse into them.
+            # Empty dicts and all other types are leaf values.
+            if isinstance(value, dict) and value:
+                sources[key] = _walk(value, current)
+            elif current in env_fields:
+                sources[key] = "env"
+            elif current in file_fields:
+                sources[key] = f"file: {file_fields[current]}"
+            else:
+                sources[key] = "default"
+        return sources
+
+    return _walk(effective, ())
+
+
 def format_yaml_output(
     effective: dict[str, Any],
     defaults: dict[str, Any],
+    sources: ConfigSources | None = None,
 ) -> str:
     """Format effective config as YAML with env var comments and diff markers.
 
     Produces valid, parseable YAML. Env var names are shown as comments above
     each field. Values that differ from defaults are marked with ``# (*)``.
+    When *sources* is provided, each env-var comment also shows the source
+    that provided the value (``[default]``, ``[env]``, or ``[file: ...]``).
 
     The output can be piped to a file and parsed by a YAML processor.
     """
-    lines: list[str] = [
-        "# Current effective configuration",
-        "# Values marked with (*) differ from defaults",
-        "# Environment variables shown in comments",
-        "",
-    ]
+    if sources is not None:
+        lines: list[str] = [
+            "# Current effective configuration",
+            "# Values marked with (*) differ from defaults",
+            "# Source shown in brackets: [default], [env], [file: <path>]",
+            "",
+        ]
+    else:
+        lines = [
+            "# Current effective configuration",
+            "# Values marked with (*) differ from defaults",
+            "# Environment variables shown in comments",
+            "",
+        ]
 
-    lines = _walk_yaml_lines(effective, defaults, lines, depth=0, env_parts=[])
+    lines = _walk_yaml_lines(
+        effective,
+        defaults,
+        lines,
+        depth=0,
+        env_parts=[],
+        sources=sources,
+    )
 
     return "\n".join(lines)
 
@@ -118,6 +230,7 @@ def _walk_yaml_lines(
     lines: list[str],
     depth: int,
     env_parts: list[str],
+    sources: ConfigSources | None = None,
 ) -> list[str]:
     """Recursively build YAML output lines with env var comments and diff markers."""
     indent = "  " * depth
@@ -129,12 +242,28 @@ def _walk_yaml_lines(
         if isinstance(value, dict) and value:
             lines.append(f"{indent}{key}:")
             sub_defaults = default_value if isinstance(default_value, dict) else {}
-            lines = _walk_yaml_lines(value, sub_defaults, lines, depth + 1, current_env_parts)
+            sub_sources_raw = sources.get(key) if sources else None
+            sub_sources: ConfigSources | None = (
+                sub_sources_raw if isinstance(sub_sources_raw, dict) else None
+            )
+            lines = _walk_yaml_lines(
+                value,
+                sub_defaults,
+                lines,
+                depth + 1,
+                current_env_parts,
+                sub_sources,
+            )
             if depth == 0:
                 lines.append("")
         else:
             env_var = _get_env_var_name(*current_env_parts)
-            lines.append(f"{indent}# {env_var}")
+            source_label = ""
+            if sources is not None:
+                src = sources.get(key, "default")
+                if isinstance(src, str):
+                    source_label = f"  [{src}]"
+            lines.append(f"{indent}# {env_var}{source_label}")
             yaml_value = _format_yaml_value(value)
             if value != default_value:
                 lines.append(f"{indent}{key}: {yaml_value}  # (*)")

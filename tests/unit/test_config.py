@@ -1,4 +1,5 @@
 # SPDX-License-Identifier: GPL-3.0-only
+import os
 from pathlib import Path
 from typing import Any, Generator
 
@@ -118,3 +119,74 @@ def test_cli_config_file_overrides_defaults(tmp_home_cwd: Path) -> None:
 
     config = config_module.get_config()
     assert config.runtime.concurrency_limit == cli_concurrency
+
+
+class TestGetRawConfigValues:
+    """Tests for loading raw config values without validation."""
+
+    def test_returns_defaults_when_no_sources(
+        self,
+        monkeypatch: pytest.MonkeyPatch,
+    ) -> None:
+        """Without env vars or config files, raw values should match defaults."""
+        for key in list(os.environ):
+            if key.startswith("HERMETO_") and not key.startswith("HERMETO_TEST_"):
+                monkeypatch.delenv(key)
+        monkeypatch.setattr("hermeto.core.config.CONFIG_FILE_PATHS", [])
+
+        raw = config_module.get_raw_config_values()
+
+        assert raw["runtime"]["concurrency_limit"] == DEFAULT_CONCURRENCY
+        assert raw["runtime"]["subprocess_timeout"] == 3600
+        assert raw["http"]["read_timeout"] == 300
+
+    def test_env_var_overlay(self, monkeypatch: pytest.MonkeyPatch) -> None:
+        """Environment variables should override defaults in raw values."""
+        for key in list(os.environ):
+            if key.startswith("HERMETO_") and not key.startswith("HERMETO_TEST_"):
+                monkeypatch.delenv(key)
+        monkeypatch.setattr("hermeto.core.config.CONFIG_FILE_PATHS", [])
+        monkeypatch.setenv("HERMETO_RUNTIME__CONCURRENCY_LIMIT", "99")
+
+        raw = config_module.get_raw_config_values()
+        assert raw["runtime"]["concurrency_limit"] == 99
+
+    def test_config_file_overlay(
+        self,
+        tmp_path: Path,
+        monkeypatch: pytest.MonkeyPatch,
+    ) -> None:
+        """Config file values should override defaults in raw values."""
+        for key in list(os.environ):
+            if key.startswith("HERMETO_") and not key.startswith("HERMETO_TEST_"):
+                monkeypatch.delenv(key)
+        config_path = tmp_path / "hermeto.yaml"
+        _write_yaml_config(config_path, {"http": {"read_timeout": 600}})
+        monkeypatch.setattr("hermeto.core.config.CONFIG_FILE_PATHS", [str(config_path)])
+
+        raw = config_module.get_raw_config_values()
+        assert raw["http"]["read_timeout"] == 600
+
+    def test_works_with_invalid_config(self, monkeypatch: pytest.MonkeyPatch) -> None:
+        """Raw values should load even when the config would fail validation."""
+        for key in list(os.environ):
+            if key.startswith("HERMETO_") and not key.startswith("HERMETO_TEST_"):
+                monkeypatch.delenv(key)
+        monkeypatch.setattr("hermeto.core.config.CONFIG_FILE_PATHS", [])
+        # proxy_login without proxy_password triggers a validation error
+        monkeypatch.setenv("HERMETO_PIP__PROXY_LOGIN", "user-without-password")
+
+        raw = config_module.get_raw_config_values()
+        assert raw["pip"]["proxy_login"] == "user-without-password"
+        assert raw["pip"]["proxy_password"] is None
+
+
+class TestNormalizeConfigData:
+    """Tests for the standalone normalization function."""
+
+    def test_migrates_legacy_flat_fields(self) -> None:
+        """Legacy flat fields should be migrated to their namespaced locations."""
+        data = {"goproxy_url": "https://custom.proxy"}
+        result = config_module.normalize_config_data(data)
+        assert result["gomod"]["proxy_url"] == "https://custom.proxy"
+        assert "goproxy_url" not in result
