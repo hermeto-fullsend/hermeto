@@ -64,6 +64,22 @@ files or ask. Do not assume.
 - `requirements*.txt` are auto-generated -- add deps to
   `pyproject.toml`, then `nox -s pip-compile`
 
+## RPM lockfile tooling
+
+Regenerating `rpms.lock.yaml` and expected SBOM outputs
+(`bom.json`) requires
+[rpm-lockfile-prototype](https://github.com/konflux-ci/rpm-lockfile-prototype),
+an external tool that is not part of hermeto's Python
+dependencies. Lockfile regeneration also requires network
+access to RPM package repositories (e.g.,
+cdn-ubi.redhat.com), which may be blocked in sandboxed or
+CI environments.
+
+When RPM lockfile or expected SBOM changes are needed but
+the tooling or network access is unavailable, document the
+required regeneration as a manual follow-up step rather
+than attempting and failing repeatedly.
+
 ## Code Style
 
 - Include type annotations for all new code
