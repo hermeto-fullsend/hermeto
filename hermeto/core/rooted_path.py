@@ -1,12 +1,16 @@
 # SPDX-License-Identifier: GPL-3.0-only
+import logging
 import os
+from collections.abc import Iterator
 from pathlib import Path
-from typing import Any, TypeVar
+from typing import IO, Any, TypeVar
 
 from pydantic_core import CoreSchema, core_schema
 
 from hermeto.core.errors import PathOutsideRoot
 from hermeto.core.type_aliases import StrPath
+
+log = logging.getLogger(__name__)
 
 RootedPathT = TypeVar("RootedPathT", bound="RootedPath")
 
@@ -31,11 +35,21 @@ class RootedPath(os.PathLike[str]):
     >>> rooted_path.join_within_root("vendor", "modules.txt").path
     PosixPath('/some/directory/vendor/modules.txt')
 
+    Supports the ``/`` operator for path joining (delegates to join_within_root):
+
+    >>> rooted_path = RootedPath("/some/directory")
+    >>> (rooted_path / "subpath").path
+    PosixPath('/some/directory/subpath')
+
     The join_within_root method remembers the original root. See the join_within_root
     and re_root docstrings for more details.
 
     Implements the PathLike interface -> most stdlib methods that accept paths will work
     with a RootedPath as well.
+
+    Exposes commonly-used pathlib.Path properties and methods as convenience delegates.
+    Mutating filesystem methods (rename, unlink, symlink_to, etc.) are intentionally
+    not delegated to preserve safety guarantees.
 
     Implements __get_validators__ for pydantic integration.
     """
@@ -121,6 +135,131 @@ class RootedPath(os.PathLike[str]):
         new = self.re_root(*other)
         new._root = self.root
         return new
+
+    def __truediv__(self: RootedPathT, other: StrPath) -> RootedPathT:
+        """Join paths using the ``/`` operator, delegating to join_within_root.
+
+        :raises PathOutsideRoot: if the resulting path is not a subpath of the root
+        """
+        return self.join_within_root(other)
+
+    # -- pathlib.Path property delegates --
+
+    @property
+    def name(self) -> str:
+        """The final component of the path."""
+        return self._path.name
+
+    @property
+    def suffix(self) -> str:
+        """The file extension of the final component."""
+        return self._path.suffix
+
+    @property
+    def stem(self) -> str:
+        """The final component without its suffix."""
+        return self._path.stem
+
+    @property
+    def parts(self) -> tuple[str, ...]:
+        """The components of the path as a tuple."""
+        return self._path.parts
+
+    @property
+    def parent(self: RootedPathT) -> RootedPathT:
+        """Get the parent directory, clamped at the root boundary.
+
+        Unlike pathlib.Path.parent, this will never return a path above
+        the root — repeated calls to .parent stop at the root.
+        """
+        parent_path = self._path.parent
+        if not parent_path.is_relative_to(self._root):
+            parent_path = self._root
+        cls = type(self)
+        new = cls.__new__(cls)
+        new._root = self._root
+        new._path = parent_path
+        return new
+
+    # -- pathlib.Path method delegates --
+
+    def exists(self) -> bool:
+        """Whether the path points to an existing file or directory."""
+        return self._path.exists()
+
+    def is_file(self) -> bool:
+        """Whether the path points to a regular file."""
+        return self._path.is_file()
+
+    def is_dir(self) -> bool:
+        """Whether the path points to a directory."""
+        return self._path.is_dir()
+
+    def is_symlink(self) -> bool:
+        """Whether the path is a symbolic link."""
+        return self._path.is_symlink()
+
+    def iterdir(self: RootedPathT) -> Iterator[RootedPathT]:
+        """Iterate over directory contents, yielding RootedPath objects.
+
+        Each yielded item preserves the root boundary of this RootedPath.
+        Entries that are symlinks resolving outside the root boundary are
+        silently skipped (with a debug log message), since they cannot be
+        represented as a RootedPath under this root.
+        """
+        for child in self._path.iterdir():
+            try:
+                yield self.join_within_root(child.name)
+            except PathOutsideRoot:
+                log.debug("iterdir: skipping %s (resolves outside root %s)", child, self._root)
+
+    def read_text(self, encoding: str | None = None, errors: str | None = None) -> str:
+        """Read the file contents as a string."""
+        return self._path.read_text(encoding=encoding, errors=errors)
+
+    def read_bytes(self) -> bytes:
+        """Read the file contents as bytes."""
+        return self._path.read_bytes()
+
+    def write_text(
+        self,
+        data: str,
+        encoding: str | None = None,
+        errors: str | None = None,
+        newline: str | None = None,
+    ) -> int:
+        """Write string data to the file."""
+        return self._path.write_text(data, encoding=encoding, errors=errors, newline=newline)
+
+    def stat(self) -> os.stat_result:
+        """Return the result of os.stat() on this path."""
+        return self._path.stat()
+
+    def open(
+        self,
+        mode: str = "r",
+        buffering: int = -1,
+        encoding: str | None = None,
+        errors: str | None = None,
+        newline: str | None = None,
+    ) -> IO[Any]:
+        """Open the file pointed to by the path.
+
+        Supports all modes — the safety guarantee of RootedPath is about
+        path traversal prevention, not I/O mode restriction.
+        """
+        return self._path.open(
+            mode=mode, buffering=buffering, encoding=encoding, errors=errors, newline=newline
+        )
+
+    def mkdir(
+        self,
+        mode: int = 0o777,
+        parents: bool = False,
+        exist_ok: bool = False,
+    ) -> None:
+        """Create the directory at this path."""
+        self._path.mkdir(mode=mode, parents=parents, exist_ok=exist_ok)
 
     @classmethod
     def __get_pydantic_core_schema__(cls, source: Any, handler: Any) -> CoreSchema:

@@ -98,7 +98,7 @@ def _check_zero_installs(project: Project) -> None:
 
 def _check_lockfile(project: Project) -> None:
     lockfile_filename = project.yarn_rc.get("lockfileFilename", "yarn.lock")
-    if not project.source_dir.join_within_root(lockfile_filename).path.exists():
+    if not project.source_dir.join_within_root(lockfile_filename).exists():
         raise LockfileNotFound(
             files=project.source_dir.join_within_root(lockfile_filename).path,
         )
@@ -299,7 +299,7 @@ def _hide_dev_dependencies(project: Project) -> Generator[None, None, None]:
 
         filename = project.yarn_rc.get("lockfileFilename", "yarn.lock")
         lockfile = project.source_dir.join_within_root(filename)
-        content = lockfile.path.read_text()
+        content = lockfile.read_text()
         try:
             run_yarn_cmd(["install", "--mode", "update-lockfile"], project.source_dir)
             yield
@@ -308,7 +308,7 @@ def _hide_dev_dependencies(project: Project) -> Generator[None, None, None]:
                 package_json["devDependencies"] = deps
                 package_json.write()
 
-            lockfile.path.write_text(content)
+            lockfile.write_text(content)
             project.yarn_rc["globalFolder"] = global_folder
             project.yarn_rc.write()
 
