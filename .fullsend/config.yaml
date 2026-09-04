@@ -1,0 +1,6 @@
+# Pin the `opus` alias to the 4.6 generation for this repo.
+# Works around missing Vertex access to claude-opus-5
+# (403: aiplatform.endpoints.predict denied on claude-opus-5).
+models:
+    aliases:
+        opus: claude-opus-4-6
