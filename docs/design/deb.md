@@ -79,7 +79,8 @@ analogous to `rpm-lockfile-prototype` for RPMs. Users must construct the
 
 - `apt-cache show <package>` -- provides version, architecture, SHA256,
   and the repository-relative `Filename` path (not a full download URL)
-- `apt-cache depends <package>` -- lists transitive dependencies
+- `apt-cache depends <package>` -- lists direct dependencies (use
+  `--recurse` for transitive)
 - `apt download --print-uris <package>` -- prints the download URL and
   checksum for a package
 
@@ -226,7 +227,7 @@ install pre-fetched packages offline:
 Content of the generated `hermeto.list` file:
 
 ```
-deb [trusted=yes] file://<for-output-dir>/deps/deb/<arch>/<repoid> ./
+deb [trusted=yes] file://<for_output_dir>/deps/deb/<arch>/<repoid> ./
 ```
 
 The `[trusted=yes]` option tells APT to skip GPG signature verification
@@ -255,7 +256,7 @@ be mounted into the build container as `/etc/apt/sources.list.d/`.
 
 No Dockerfile changes are needed beyond mounting the pre-fetched
 dependencies and the generated `sources.list`. The `hermeto.list` file
-references paths of the form `file://<for-output-dir>/deps/deb/<arch>/<repoid>`,
+references paths of the form `file://<for_output_dir>/deps/deb/<arch>/<repoid>`,
 so the directory structure relative to `for_output_dir` must be preserved
 in the build container. Example usage in a multi-stage build:
 
