@@ -155,6 +155,7 @@ class TestTopLevelOpts:
 
     @pytest.mark.usefixtures("_clean_hermeto_env")
     def test_config_shows_source_annotations(self, monkeypatch: pytest.MonkeyPatch) -> None:
+        """Config output should include source annotations showing value origins."""
         monkeypatch.setenv("HERMETO_RUNTIME__CONCURRENCY_LIMIT", "10")
 
         config_file.config = None

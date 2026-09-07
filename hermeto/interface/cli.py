@@ -13,7 +13,6 @@ from typing import Any
 import pydantic
 import typer
 
-import hermeto.core.config as _config_module
 from hermeto import APP_NAME
 from hermeto.core.config import get_config, get_raw_config_values, set_config
 from hermeto.core.constants import Mode
@@ -45,6 +44,10 @@ log = logging.getLogger(__name__)
 
 DEFAULT_SOURCE = "."
 DEFAULT_OUTPUT = f"./{APP_NAME}-output"
+# Name of the --config-file CLI option in typer's params dict.
+# Extracted as a constant so a rename does not silently break the
+# string lookup in the config subcommand.
+_CONFIG_FILE_PARAM = "config_file"
 
 FETCH_DEPS_HELP = f"""\
     Fetch dependencies for supported package managers.
@@ -220,6 +223,7 @@ def main(  # noqa: D103 -- docstring becomes part of --help message
         # Let the config subcommand handle validation errors gracefully
         # so it can display diagnostic output even with invalid config
         if ctx.invoked_subcommand == "config":
+            ctx.obj = {"config_error": True}
             return
         raise
 
@@ -288,16 +292,18 @@ def config(
     """Show the current effective configuration with source annotations."""
     config_file_path: Path | None = None
     if ctx.parent:
-        raw_path = ctx.parent.params.get("config_file")
+        raw_path = ctx.parent.params.get(_CONFIG_FILE_PARAM)
         if raw_path is not None:
             config_file_path = Path(raw_path)
 
+    config_error = (ctx.obj or {}).get("config_error", False)
+
     validation_error: str | None = None
     try:
-        if config_file_path and _config_module.config is None:
-            # main() returned early (validation error + config subcommand):
-            # the global singleton is unset.  Attempt to load the CLI config
-            # file to either succeed or trigger the error path for graceful
+        if config_file_path and config_error:
+            # main() signalled a validation error via ctx.obj: the global
+            # singleton is unset.  Attempt to load the CLI config file to
+            # either succeed or trigger the error path for graceful
             # degradation display.
             current_config = set_config(config_file_path)
         else:

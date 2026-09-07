@@ -52,20 +52,27 @@ _REDACTED_VALUE = "**********"  # noqa: S105
 def _get_sensitive_field_names() -> frozenset[str]:
     """Derive sensitive field names from the Config schema.
 
-    Collects all field names annotated as ``SecretStr`` across Config and its
-    nested settings models so that the set stays in sync with the schema
-    automatically.
+    Recursively collects all field names annotated as ``SecretStr`` across
+    Config and its nested settings models (at any depth) so that the set
+    stays in sync with the schema automatically.
     """
     names: set[str] = set()
-    for field_info in Config.model_fields.values():
-        default = field_info.default
-        if hasattr(type(default), "model_fields"):
-            for sub_name, sub_field in type(default).model_fields.items():
-                if sub_field.annotation is SecretStr or (
-                    hasattr(sub_field.annotation, "__args__")
-                    and SecretStr in sub_field.annotation.__args__
-                ):
-                    names.add(sub_name)
+
+    def _walk_model(model_cls: type) -> None:
+        if not hasattr(model_cls, "model_fields"):
+            return
+        for field_name, field_info in model_cls.model_fields.items():
+            annotation = field_info.annotation
+            if annotation is SecretStr or (
+                hasattr(annotation, "__args__") and SecretStr in annotation.__args__
+            ):
+                names.add(field_name)
+            # Recurse into nested models via the field default
+            default = field_info.default
+            if hasattr(type(default), "model_fields"):
+                _walk_model(type(default))
+
+    _walk_model(Config)
     return frozenset(names)
 
 
@@ -153,7 +160,7 @@ def _collect_fields_from_dict(
     """
     for key, value in data.items():
         current = prefix + (key,)
-        if isinstance(value, dict):
+        if isinstance(value, dict) and value:
             _collect_fields_from_dict(value, label, result, current)
         else:
             result[current] = label
@@ -180,15 +187,15 @@ def get_config_sources(
     >>> sources["runtime"]["concurrency_limit"]
     'default'
     """
-    # --- environment variables (filtered to known config sections) -------------
+    # Environment variables (filtered to known config sections)
     env_fields = get_hermeto_env_vars()
 
-    # --- config files (ascending priority, later entries overwrite earlier) -----
+    # Config files (ascending priority, later entries overwrite earlier)
     file_fields: dict[tuple[str, ...], str] = {}
     for label, data in iter_config_file_data(config_file_path):
         _collect_fields_from_dict(data, label, file_fields)
 
-    # --- walk effective config and assign sources ------------------------------
+    # Walk effective config and assign sources
     def _walk(
         data: dict[str, Any],
         path: tuple[str, ...],

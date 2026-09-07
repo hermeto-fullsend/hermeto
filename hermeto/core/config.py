@@ -1,4 +1,15 @@
 # SPDX-License-Identifier: GPL-3.0-only
+"""Configuration loading, model definition, and low-level config helpers.
+
+In addition to the ``Config`` model and ``get_config`` / ``set_config``,
+this module exposes several display-support functions
+(``get_config_defaults``, ``get_hermeto_env_vars``, ``iter_config_file_data``,
+``get_raw_config_values``) that are consumed by ``config_show.py``.  They
+live here rather than in ``config_show.py`` because they need direct access
+to ``Config`` internals (``model_fields``, ``model_config``,
+``CONFIG_FILE_PATHS``).  Moving them would create a circular import.
+"""
+
 import logging
 import os
 from collections.abc import Iterator
@@ -446,6 +457,8 @@ def _coerce_scalar(value: Any) -> bool | int | float | str | None:
         return True
     if lower == "false":
         return False
+    # Assumes no config field uses the literal string "none" as a meaningful
+    # value distinct from Python None.  Revisit if such a field is added.
     if lower in ("null", "none"):
         return None
     try:
@@ -465,6 +478,8 @@ def _coerce_leaf_strings(data: dict[str, Any]) -> dict[str, Any]:
     for key, value in data.items():
         if isinstance(value, dict):
             result[key] = _coerce_leaf_strings(value)
+        elif isinstance(value, list):
+            result[key] = [_coerce_scalar(item) for item in value]
         else:
             result[key] = _coerce_scalar(value)
     return result
@@ -520,6 +535,11 @@ def get_raw_config_values(config_path: Path | None = None) -> dict[str, Any]:
     Returns a dict with default values overlaid by config file values and
     environment variable values, in priority order.  Used by the ``config``
     command for diagnostic display when normal validation fails.
+
+    Note: the merge order here (defaults → config files → env vars) mirrors
+    the priority defined in ``Config.settings_customise_sources()``.  If new
+    source types or a different priority order are added there, this function
+    must be updated to match.
     """
     result = get_config_defaults()
 
