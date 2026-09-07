@@ -24,6 +24,7 @@ from hermeto.core.extras.config_show import (
     get_config_sources,
     get_default_config,
     get_effective_config,
+    redact_sensitive_fields,
 )
 from hermeto.core.extras.envfile import EnvFormat, generate_envfile
 from hermeto.core.models.input import Flag, PackageInput, Request, parse_user_input
@@ -164,6 +165,9 @@ def version_callback(value: bool) -> None:
     raise typer.Exit()
 
 
+# invoke_without_command=True is needed so the callback runs even when a
+# subcommand (like ``config``) is invoked, allowing global options (e.g.
+# --config-file, --log-level) to take effect before the subcommand executes.
 @app.callback(invoke_without_command=True)
 @handle_errors
 def main(  # noqa: D103 -- docstring becomes part of --help message
@@ -209,7 +213,7 @@ def main(  # noqa: D103 -- docstring becomes part of --help message
             current_config = get_config()
         # Typer ensures `mode` is already a valid Mode enum value
         current_config.mode = mode
-    except BaseError:
+    except InvalidInput:
         # Let the config subcommand handle validation errors gracefully
         # so it can display diagnostic output even with invalid config
         if ctx.invoked_subcommand == "config":
@@ -285,19 +289,22 @@ def config(
 
     validation_error: str | None = None
     try:
-        current_config = get_config()
+        if config_file_path:
+            current_config = set_config(config_file_path)
+        else:
+            current_config = get_config()
         effective = get_effective_config(current_config, raw=raw)
     except BaseError as e:
-        effective = get_raw_config_values(config_file_path)
+        effective = redact_sensitive_fields(get_raw_config_values(config_file_path), raw=raw)
         validation_error = e.friendly_msg()
 
     defaults = get_default_config()
-    sources = get_config_sources(effective, config_file_path=config_file_path)
 
     if diff:
         config_diff = get_config_diff(effective, defaults)
         print(format_diff_output(config_diff))
     else:
+        sources = get_config_sources(effective, config_file_path=config_file_path)
         print(format_yaml_output(effective, defaults, sources=sources))
 
     if validation_error:
@@ -305,11 +312,13 @@ def config(
             f"\nConfiguration has validation errors:\n{validation_error}",
             file=sys.stderr,
         )
-        print(
-            "\nTip: review the [source] annotations above to identify which"
-            " config source provides the problematic values.",
-            file=sys.stderr,
-        )
+        if not diff:
+            print(
+                "\nTip: review the [source] annotations above to identify which"
+                " config source provides the problematic values.",
+                file=sys.stderr,
+            )
+        raise typer.Exit(code=1)
 
 
 @app.command(help=FETCH_DEPS_HELP)

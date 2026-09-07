@@ -12,9 +12,14 @@ from typing import Any
 
 import yaml
 
-from hermeto.core.config import CONFIG_FILE_PATHS, Config, _normalize_config_data
+from hermeto.core.config import (
+    CONFIG_FILE_PATHS,
+    Config,
+    _read_normalized_yaml,
+    get_config_defaults,
+)
 
-# Type aliases for configuration diff structures.
+# Type aliases for configuration diff and source-tracking structures.
 ConfigValue = str | int | float | bool | None | dict[str, Any] | list[Any]
 FieldDiff = tuple[ConfigValue, ConfigValue]  # (current_value, default_value)
 # Recursive: a section maps field names to FieldDiffs, or to further nested sections.
@@ -41,6 +46,57 @@ def _get_env_var_name(*parts: str) -> str:
     return f"{prefix}{delimiter.join(part.upper() for part in parts)}"
 
 
+_REDACTED_VALUE = "**********"  # noqa: S105
+
+
+def _get_sensitive_field_names() -> frozenset[str]:
+    """Derive sensitive field names from the Config schema.
+
+    Collects all field names annotated as ``SecretStr`` across Config and its
+    nested settings models so that the set stays in sync with the schema
+    automatically.
+    """
+    from pydantic import SecretStr
+
+    names: set[str] = set()
+    for field_info in Config.model_fields.values():
+        default = field_info.default
+        if hasattr(type(default), "model_fields"):
+            for sub_name, sub_field in type(default).model_fields.items():
+                if sub_field.annotation is SecretStr or (
+                    hasattr(sub_field.annotation, "__args__")
+                    and SecretStr in sub_field.annotation.__args__
+                ):
+                    names.add(sub_name)
+    return frozenset(names)
+
+
+def redact_sensitive_fields(data: dict[str, Any], *, raw: bool = False) -> dict[str, Any]:
+    """Redact SecretStr fields in a raw config dict unless *raw* is True.
+
+    Walks the nested dict and replaces values for fields whose name matches
+    a ``SecretStr``-annotated field in the Config schema.  Returns a new dict;
+    the original is not modified.
+    """
+    if raw:
+        return data
+
+    sensitive = _get_sensitive_field_names()
+
+    def _walk(d: dict[str, Any]) -> dict[str, Any]:
+        result: dict[str, Any] = {}
+        for key, value in d.items():
+            if isinstance(value, dict):
+                result[key] = _walk(value)
+            elif key in sensitive and value is not None:
+                result[key] = _REDACTED_VALUE
+            else:
+                result[key] = value
+        return result
+
+    return _walk(data)
+
+
 def get_effective_config(config: Config, *, raw: bool = False) -> dict[str, Any]:
     """Get the current effective configuration as a nested dict.
 
@@ -55,18 +111,11 @@ def get_effective_config(config: Config, *, raw: bool = False) -> dict[str, Any]
 def get_default_config() -> dict[str, Any]:
     """Get the default configuration values.
 
-    Uses field.default from Config.model_fields rather than Config() because
-    Config extends BaseSettings, so Config() would read from env vars and
-    config files instead of returning pure schema defaults.
+    Delegates to ``get_config_defaults()`` in ``config.py`` which extracts
+    defaults from ``Config.model_fields`` without instantiating Config
+    (which would read env vars and config files).
     """
-    result: dict[str, Any] = {}
-    for name, field in Config.model_fields.items():
-        default = field.default
-        if hasattr(type(default), "model_fields"):
-            result[name] = default.model_dump(mode="json")
-        else:
-            result[name] = default.value if hasattr(default, "value") else default
-    return result
+    return get_config_defaults()
 
 
 def get_config_diff(
@@ -148,23 +197,14 @@ def get_config_sources(
     for path_str in CONFIG_FILE_PATHS:
         path = Path(path_str).expanduser()
         if path.exists():
-            try:
-                raw = yaml.safe_load(path.read_text())
-                if isinstance(raw, dict):
-                    normalized = _normalize_config_data(dict(raw))
-                    _collect_fields_from_dict(normalized, path_str, file_fields)
-            except Exception:  # noqa: S112
-                # Skip unreadable files; the main Config() path will report them
-                continue
+            normalized = _read_normalized_yaml(path)
+            if normalized is not None:
+                _collect_fields_from_dict(normalized, path_str, file_fields)
 
     if config_file_path and config_file_path.exists():
-        try:
-            raw = yaml.safe_load(config_file_path.read_text())
-            if isinstance(raw, dict):
-                normalized = _normalize_config_data(dict(raw))
-                _collect_fields_from_dict(normalized, str(config_file_path), file_fields)
-        except Exception:  # noqa: S110
-            pass  # Skip unreadable CLI config; the main Config() path will report it
+        normalized = _read_normalized_yaml(config_file_path)
+        if normalized is not None:
+            _collect_fields_from_dict(normalized, str(config_file_path), file_fields)
 
     # --- walk effective config and assign sources ------------------------------
     def _walk(

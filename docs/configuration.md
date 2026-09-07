@@ -53,6 +53,18 @@ Use `hermeto config` to display the effective configuration after all sources
 have been merged. Each field is annotated with its corresponding environment
 variable name, and values that differ from defaults are marked with `(*)`.
 
+Source annotations show where each value originates:
+
+- `[default]` — the value comes from the schema default.
+- `[env]` — the value was set via an environment variable.
+- `[file: <path>]` — the value was read from a YAML config file.
+
+If the configuration has validation errors (e.g. `proxy_login` set without
+`proxy_password`), `hermeto config` will still display the raw merged
+configuration with source annotations and print the validation errors to
+stderr, exiting with code 1. This helps diagnose which source provides the
+problematic values.
+
 ```shell
 hermeto config
 ```

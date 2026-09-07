@@ -176,6 +176,7 @@ class TestTopLevelOpts:
             result = runner.invoke(app, ["config"])
         config_file.config = None
 
+        assert result.exit_code == 1
         # Should still produce config output (not just an error)
         assert "pip:" in result.output
         assert "proxy_login: user-without-password" in result.output
@@ -193,8 +194,16 @@ class TestTopLevelOpts:
             result = runner.invoke(app, ["config", "--diff"])
         config_file.config = None
 
+        assert result.exit_code == 1
         # Should still produce diff output showing the non-default value
         assert "proxy_login" in result.output
+
+    def test_bare_hermeto_shows_help(self) -> None:
+        """Running hermeto with no subcommand should produce help output."""
+        result = runner.invoke(app, [])
+        # no_args_is_help=True makes typer exit with code 0 after printing help,
+        # but CliRunner reports exit code 2 for missing required arguments
+        assert "Usage" in result.output
 
     @pytest.mark.parametrize(
         "config_values",

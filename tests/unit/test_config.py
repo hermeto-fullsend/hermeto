@@ -187,6 +187,6 @@ class TestNormalizeConfigData:
     def test_migrates_legacy_flat_fields(self) -> None:
         """Legacy flat fields should be migrated to their namespaced locations."""
         data = {"goproxy_url": "https://custom.proxy"}
-        result = config_module._normalize_config_data(data)
+        result = config_module.normalize_config_data(data)
         assert result["gomod"]["proxy_url"] == "https://custom.proxy"
         assert "goproxy_url" not in result

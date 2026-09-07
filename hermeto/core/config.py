@@ -207,7 +207,7 @@ class CargoSettings(ProxyMixin, extra="forbid"):
         return self
 
 
-def _normalize_config_data(data: dict[str, Any]) -> dict[str, Any]:
+def normalize_config_data(data: dict[str, Any]) -> dict[str, Any]:
     """Normalize config data to the current namespaced structure.
 
     Removes deprecated fields (with warnings) and migrates legacy flat
@@ -278,7 +278,7 @@ class Config(BaseSettings):
         """Normalize config data to the new namespaced structure."""
         if not isinstance(data, dict):
             return data
-        return _normalize_config_data(data)
+        return normalize_config_data(data)
 
     @classmethod
     def settings_customise_sources(
@@ -399,14 +399,13 @@ def _set_nested_value(target: dict[str, Any], parts: list[str], value: Any) -> N
         target[parts[-1]] = value
 
 
-def get_raw_config_values(config_path: Path | None = None) -> dict[str, Any]:
-    """Load and merge config values from all sources without model validation.
+def get_config_defaults() -> dict[str, Any]:
+    """Extract default values from Config schema fields.
 
-    Returns a dict with default values overlaid by config file values and
-    environment variable values, in priority order.  Used by the ``config``
-    command for diagnostic display when normal validation fails.
+    Uses field.default from Config.model_fields rather than Config() because
+    Config extends BaseSettings, so Config() would read from env vars and
+    config files instead of returning pure schema defaults.
     """
-    # Start with schema defaults
     result: dict[str, Any] = {}
     for name, field in Config.model_fields.items():
         default = field.default
@@ -414,27 +413,46 @@ def get_raw_config_values(config_path: Path | None = None) -> dict[str, Any]:
             result[name] = default.model_dump(mode="json")
         else:
             result[name] = default.value if hasattr(default, "value") else default
+    return result
+
+
+def _read_normalized_yaml(path: Path) -> dict[str, Any] | None:
+    """Read and normalize a YAML config file, returning None on failure.
+
+    Returns the normalized dict on success, or None if the file cannot be
+    read or does not contain a dict.
+    """
+    try:
+        raw = yaml.safe_load(path.read_text())
+        if isinstance(raw, dict):
+            return normalize_config_data(dict(raw))
+    except (FileNotFoundError, yaml.YAMLError, PermissionError, OSError):
+        log.debug("Could not read config file %s", path, exc_info=True)
+    return None
+
+
+def get_raw_config_values(config_path: Path | None = None) -> dict[str, Any]:
+    """Load and merge config values from all sources without model validation.
+
+    Returns a dict with default values overlaid by config file values and
+    environment variable values, in priority order.  Used by the ``config``
+    command for diagnostic display when normal validation fails.
+    """
+    result = get_config_defaults()
 
     # Overlay values from default config files (ascending priority)
     for path_str in CONFIG_FILE_PATHS:
         path = Path(path_str).expanduser()
         if path.exists():
-            try:
-                raw = yaml.safe_load(path.read_text())
-                if isinstance(raw, dict):
-                    _deep_merge(result, _normalize_config_data(dict(raw)))
-            except Exception:
-                log.debug("Could not read config file %s for raw merge", path_str, exc_info=True)
-                continue
+            normalized = _read_normalized_yaml(path)
+            if normalized is not None:
+                _deep_merge(result, normalized)
 
     # Overlay values from CLI config file
     if config_path and config_path.exists():
-        try:
-            raw = yaml.safe_load(config_path.read_text())
-            if isinstance(raw, dict):
-                _deep_merge(result, _normalize_config_data(dict(raw)))
-        except Exception:
-            log.debug("Could not read CLI config file %s for raw merge", config_path, exc_info=True)
+        normalized = _read_normalized_yaml(config_path)
+        if normalized is not None:
+            _deep_merge(result, normalized)
 
     # Overlay values from environment variables
     prefix = Config.model_config.get("env_prefix", "")
