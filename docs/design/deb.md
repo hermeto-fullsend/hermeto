@@ -235,10 +235,18 @@ the lockfile, because hermeto has already verified each package's
 checksum individually. When a package entry omits the `checksum` field,
 neither hermeto nor APT performs integrity verification -- the package
 is downloaded without any integrity check and is marked with
-`hermeto:missing_hash:in_file` in the SBOM. Generating signed
-`Release`/`InRelease` files (via `apt-ftparchive`) would add complexity
-and require managing GPG keys without meaningful security benefit on top
-of per-file checksum verification.
+`hermeto:missing_hash:in_file` in the SBOM. In the no-checksum case,
+signed `Release`/`InRelease` files could theoretically add integrity
+verification, but the practical benefit is limited: the signing key
+would be locally managed (not from the upstream repository), so it
+provides no upstream authenticity, and the real integrity gap is at
+download time over the network, which repository-level Release signing
+does not address. Generating signed metadata (via `apt-ftparchive`)
+would add complexity and require managing GPG keys; for the
+checksums-present case, this provides no meaningful security benefit
+on top of per-file checksum verification. The absence of Release
+signing when checksums are also absent is accepted as a known
+limitation.
 
 The `sources.list.d/` directory for the corresponding architecture can
 be mounted into the build container as `/etc/apt/sources.list.d/`.
@@ -323,7 +331,7 @@ The implementation closely follows the RPM backend structure:
    - `_verify_downloaded()`: Size and checksum verification (same logic
      as RPM).
    - `_generate_sbom_components()`: Extracts package name, version, and
-     architecture from `.deb` metadata via `dpkg-deb --showformat`,
+     architecture from `.deb` metadata via `dpkg-deb -W --showformat`,
      generates `pkg:deb` PURLs.
    - `inject_files_post()`: Runs `dpkg-scanpackages` on each repoid
      directory to generate `Packages` indices, then writes a
@@ -348,7 +356,7 @@ The implementation closely follows the RPM backend structure:
 
 5. **Package metadata extraction**: Unlike RPM (which uses the `rpm`
    command to query tags from `.rpm` files), `.deb` metadata extraction
-   uses `dpkg-deb --showformat` as the primary mechanism to read package
+   uses `dpkg-deb -W --showformat` as the primary mechanism to read package
    name, version, and architecture from the `control` file. This mirrors
    the RPM backend's use of the `rpm` command for metadata queries.
    The `dpkg-deb` tool is standard on Debian-based systems. The
@@ -357,8 +365,8 @@ The implementation closely follows the RPM backend structure:
    implementation.
 
    `dpkg-deb` is safe to run on untrusted `.deb` files in this context:
-   the `--showformat` flag performs metadata-only extraction and does not
-   execute any package scripts (preinst, postinst, etc.).
+   the `-W --showformat` invocation performs metadata-only extraction
+   and does not execute any package scripts (preinst, postinst, etc.).
 
 ### Current Limitations
 
