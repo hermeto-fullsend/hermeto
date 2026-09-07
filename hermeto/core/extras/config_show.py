@@ -6,17 +6,16 @@ corresponding environment variable names, compute differences against
 default values, and determine which source provided each value.
 """
 
-import os
 from pathlib import Path
 from typing import Any
 
 import yaml
 
 from hermeto.core.config import (
-    CONFIG_FILE_PATHS,
     Config,
-    _read_normalized_yaml,
     get_config_defaults,
+    get_hermeto_env_vars,
+    iter_config_file_data,
 )
 
 # Type aliases for configuration diff and source-tracking structures.
@@ -182,29 +181,13 @@ def get_config_sources(
     >>> sources["runtime"]["concurrency_limit"]
     'default'
     """
-    # --- environment variables -------------------------------------------------
-    prefix = Config.model_config.get("env_prefix") or ""
-    delimiter = Config.model_config.get("env_nested_delimiter") or "__"
-    env_fields: dict[tuple[str, ...], str] = {}
-    for key in os.environ:
-        if key.startswith(prefix):
-            remainder = key[len(prefix) :]
-            parts = tuple(p.lower() for p in remainder.split(delimiter))
-            env_fields[parts] = key
+    # --- environment variables (filtered to known config sections) -------------
+    env_fields = get_hermeto_env_vars()
 
     # --- config files (ascending priority, later entries overwrite earlier) -----
     file_fields: dict[tuple[str, ...], str] = {}
-    for path_str in CONFIG_FILE_PATHS:
-        path = Path(path_str).expanduser()
-        if path.exists():
-            normalized = _read_normalized_yaml(path)
-            if normalized is not None:
-                _collect_fields_from_dict(normalized, path_str, file_fields)
-
-    if config_file_path and config_file_path.exists():
-        normalized = _read_normalized_yaml(config_file_path)
-        if normalized is not None:
-            _collect_fields_from_dict(normalized, str(config_file_path), file_fields)
+    for label, data in iter_config_file_data(config_file_path):
+        _collect_fields_from_dict(data, label, file_fields)
 
     # --- walk effective config and assign sources ------------------------------
     def _walk(

@@ -1,6 +1,7 @@
 # SPDX-License-Identifier: GPL-3.0-only
 import logging
 import os
+from collections.abc import Iterator
 from pathlib import Path
 from typing import Annotated, Any
 
@@ -416,7 +417,7 @@ def get_config_defaults() -> dict[str, Any]:
     return result
 
 
-def _read_normalized_yaml(path: Path) -> dict[str, Any] | None:
+def read_normalized_yaml(path: Path) -> dict[str, Any] | None:
     """Read and normalize a YAML config file, returning None on failure.
 
     Returns the normalized dict on success, or None if the file cannot be
@@ -431,6 +432,88 @@ def _read_normalized_yaml(path: Path) -> dict[str, Any] | None:
     return None
 
 
+def _coerce_scalar(value: Any) -> bool | int | float | str | None:
+    """Coerce a string value to its native Python type.
+
+    Env vars are always strings but Config schema defaults are typed (int,
+    bool, etc.).  Coercing prevents spurious diff markers when comparing
+    raw env values against typed defaults.
+    """
+    if not isinstance(value, str):
+        return value
+    lower = value.lower()
+    if lower == "true":
+        return True
+    if lower == "false":
+        return False
+    if lower in ("null", "none") or value == "":
+        return None
+    try:
+        return int(value)
+    except ValueError:
+        pass
+    try:
+        return float(value)
+    except ValueError:
+        pass
+    return value
+
+
+def _coerce_leaf_strings(data: dict[str, Any]) -> dict[str, Any]:
+    """Recursively coerce string leaf values in a nested dict to native types."""
+    result: dict[str, Any] = {}
+    for key, value in data.items():
+        if isinstance(value, dict):
+            result[key] = _coerce_leaf_strings(value)
+        else:
+            result[key] = _coerce_scalar(value)
+    return result
+
+
+def get_hermeto_env_vars() -> dict[tuple[str, ...], str]:
+    """Enumerate HERMETO_-prefixed env vars filtered to known config sections.
+
+    Returns a mapping from field-path tuples (e.g. ``("runtime",
+    "concurrency_limit")``) to the environment variable name.  Only
+    variables whose top-level key matches a ``Config.model_fields`` entry
+    are included, so test-harness variables like ``HERMETO_TEST_*`` are
+    excluded.
+    """
+    prefix = Config.model_config.get("env_prefix", "")
+    delimiter = Config.model_config.get("env_nested_delimiter") or "__"
+    known_keys = frozenset(Config.model_fields.keys())
+    result: dict[tuple[str, ...], str] = {}
+    for key in os.environ:
+        if key.startswith(prefix):
+            remainder = key[len(prefix) :]
+            parts = tuple(p.lower() for p in remainder.split(delimiter))
+            if parts and parts[0] in known_keys:
+                result[parts] = key
+    return result
+
+
+def iter_config_file_data(
+    config_path: Path | None = None,
+) -> Iterator[tuple[str, dict[str, Any]]]:
+    """Yield ``(label, normalized_data)`` for each readable config file.
+
+    Iterates default config file paths in ascending priority order, then
+    the CLI-provided *config_path* if given.  Centralises the config-file
+    walk so that ``get_raw_config_values`` and ``get_config_sources`` share
+    the same iteration logic.
+    """
+    for path_str in CONFIG_FILE_PATHS:
+        path = Path(path_str).expanduser()
+        if path.exists():
+            normalized = read_normalized_yaml(path)
+            if normalized is not None:
+                yield (path_str, normalized)
+    if config_path and config_path.exists():
+        normalized = read_normalized_yaml(config_path)
+        if normalized is not None:
+            yield (str(config_path), normalized)
+
+
 def get_raw_config_values(config_path: Path | None = None) -> dict[str, Any]:
     """Load and merge config values from all sources without model validation.
 
@@ -440,27 +523,15 @@ def get_raw_config_values(config_path: Path | None = None) -> dict[str, Any]:
     """
     result = get_config_defaults()
 
-    # Overlay values from default config files (ascending priority)
-    for path_str in CONFIG_FILE_PATHS:
-        path = Path(path_str).expanduser()
-        if path.exists():
-            normalized = _read_normalized_yaml(path)
-            if normalized is not None:
-                _deep_merge(result, normalized)
+    # Overlay values from config files (ascending priority)
+    for _label, data in iter_config_file_data(config_path):
+        _deep_merge(result, data)
 
-    # Overlay values from CLI config file
-    if config_path and config_path.exists():
-        normalized = _read_normalized_yaml(config_path)
-        if normalized is not None:
-            _deep_merge(result, normalized)
+    # Overlay values from environment variables (filtered to known sections)
+    env_vars = get_hermeto_env_vars()
+    for parts, env_key in env_vars.items():
+        _set_nested_value(result, list(parts), os.environ[env_key])
 
-    # Overlay values from environment variables
-    prefix = Config.model_config.get("env_prefix", "")
-    delimiter = Config.model_config.get("env_nested_delimiter") or "__"
-    for key in os.environ:
-        if key.startswith(prefix):
-            remainder = key[len(prefix) :]
-            parts = [p.lower() for p in remainder.split(delimiter)]
-            _set_nested_value(result, parts, os.environ[key])
-
-    return result
+    # Coerce string values from env vars to native types so that
+    # comparisons against typed defaults produce correct diff markers.
+    return _coerce_leaf_strings(result)

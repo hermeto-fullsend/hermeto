@@ -294,7 +294,7 @@ def config(
         else:
             current_config = get_config()
         effective = get_effective_config(current_config, raw=raw)
-    except BaseError as e:
+    except InvalidInput as e:
         effective = redact_sensitive_fields(get_raw_config_values(config_file_path), raw=raw)
         validation_error = e.friendly_msg()
 

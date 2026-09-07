@@ -298,7 +298,7 @@ class TestGetConfigSources:
         config_file.write_text(yaml.safe_dump({"http": {"read_timeout": 600}}))
 
         monkeypatch.setattr(
-            "hermeto.core.extras.config_show.CONFIG_FILE_PATHS",
+            "hermeto.core.config.CONFIG_FILE_PATHS",
             [str(config_file)],
         )
 
@@ -320,7 +320,7 @@ class TestGetConfigSources:
         config_file.write_text(yaml.safe_dump({"runtime": {"concurrency_limit": 8}}))
 
         monkeypatch.setattr(
-            "hermeto.core.extras.config_show.CONFIG_FILE_PATHS",
+            "hermeto.core.config.CONFIG_FILE_PATHS",
             [str(config_file)],
         )
         monkeypatch.setenv("HERMETO_RUNTIME__CONCURRENCY_LIMIT", "10")
@@ -364,7 +364,7 @@ class TestGetConfigSources:
         config_file.write_text(yaml.safe_dump({"goproxy_url": "https://custom.proxy"}))
 
         monkeypatch.setattr(
-            "hermeto.core.extras.config_show.CONFIG_FILE_PATHS",
+            "hermeto.core.config.CONFIG_FILE_PATHS",
             [str(config_file)],
         )
 

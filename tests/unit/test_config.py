@@ -149,7 +149,8 @@ class TestGetRawConfigValues:
         monkeypatch.setenv("HERMETO_RUNTIME__CONCURRENCY_LIMIT", "99")
 
         raw = config_module.get_raw_config_values()
-        assert raw["runtime"]["concurrency_limit"] == "99"
+        # Env var string "99" is coerced to int 99 to match schema default types
+        assert raw["runtime"]["concurrency_limit"] == 99
 
     def test_config_file_overlay(
         self,
