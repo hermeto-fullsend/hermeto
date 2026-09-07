@@ -23,7 +23,7 @@ APT package management documentation:
 1. **Prerequisites**: A Debian-based system (or container) with `apt` installed.
    No additional tooling is strictly required to use hermeto's deb backend,
    though generating the lockfile requires access to `apt-cache` or similar
-   tools (see [Dependency List Toolchain](#dependency-list-toolchain-optional)).
+   tools (see [Dependency List Toolchain](#dependency-list-toolchain)).
 2. **Adding dependencies**: Packages are declared in a `debs.lock.yaml` file
    with pinned URLs, checksums, and architecture information.
 3. **Build process**: `hermeto fetch-deps` downloads declared packages.
@@ -64,21 +64,21 @@ APT package management documentation:
   the repository is configured with `[trusted=yes]` (see
   [Build Environment Config](#build-environment-config))
 - Automatic lockfile generation (see
-  [Dependency List Toolchain](#dependency-list-toolchain-optional) for
+  [Dependency List Toolchain](#dependency-list-toolchain) for
   discussion)
 - GPG signature verification of repository metadata (hermeto verifies
   individual file checksums instead, consistent with the RPM backend)
 
 ### Dependency List Generation
 
-#### Dependency List Toolchain [optional]
+#### Dependency List Toolchain
 
 There is currently no dedicated lockfile generator for `.deb` packages
 analogous to `rpm-lockfile-prototype` for RPMs. Users must construct the
 `debs.lock.yaml` manually, using output from tools such as:
 
 - `apt-cache show <package>` -- provides version, architecture, SHA256,
-  and download URL
+  and the repository-relative `Filename` path (not a full download URL)
 - `apt-cache depends <package>` -- lists transitive dependencies
 - `apt download --print-uris <package>` -- prints the download URL and
   checksum for a package
@@ -86,7 +86,7 @@ analogous to `rpm-lockfile-prototype` for RPMs. Users must construct the
 A lockfile generator tool is desirable future work but is outside the
 scope of this backend implementation.
 
-#### Dependency List Format [optional]
+#### Dependency List Format
 
 The lockfile format mirrors the RPM lockfile, adapted for the deb
 ecosystem:
@@ -155,7 +155,7 @@ arches:
         size: 2726
 ```
 
-#### Checksum Generation [optional]
+#### Checksum Generation
 
 - **Native checksum support**: APT repositories include SHA256 checksums
   in their `Packages` metadata. Users can extract these via `apt-cache
@@ -169,14 +169,14 @@ arches:
 
 ### Fetching Content
 
-#### Native vs. Hermeto Fetch [optional]
+#### Native vs. Hermeto Fetch
 
 Hermeto downloads packages directly from the URLs in the lockfile.
 APT is not invoked during fetching -- APT's plugin and hook system can
 execute arbitrary code, violating hermeto's no-arbitrary-code-execution
 principle. This is the same approach used by the RPM backend.
 
-#### Project Structure [optional]
+#### Project Structure
 
 Output directory layout:
 
@@ -193,10 +193,9 @@ After `inject-files`:
 ```
 <output>/deps/deb/<arch>/sources.list.d/hermeto.list
 <output>/deps/deb/<arch>/<repoid>/Packages
-<output>/deps/deb/<arch>/<repoid>/Packages.gz
 ```
 
-#### Network Requirements [optional]
+#### Network Requirements
 
 - **Registry endpoints**: Any HTTP/HTTPS URL hosting `.deb` files.
   Standard mirrors include `deb.debian.org`, `archive.ubuntu.com`, and
@@ -231,8 +230,12 @@ deb [trusted=yes] file://<for-output-dir>/deps/deb/<arch>/<repoid> ./
 ```
 
 The `[trusted=yes]` option tells APT to skip GPG signature verification
-for this repository. This is acceptable because hermeto has already
-verified each package's checksum individually. Generating signed
+for this repository. This is acceptable when checksums are present in
+the lockfile, because hermeto has already verified each package's
+checksum individually. When a package entry omits the `checksum` field,
+neither hermeto nor APT performs integrity verification -- the package
+is downloaded without any integrity check and is marked with
+`hermeto:missing_hash:in_file` in the SBOM. Generating signed
 `Release`/`InRelease` files (via `apt-ftparchive`) would add complexity
 and require managing GPG keys without meaningful security benefit on top
 of per-file checksum verification.
@@ -240,25 +243,32 @@ of per-file checksum verification.
 The `sources.list.d/` directory for the corresponding architecture can
 be mounted into the build container as `/etc/apt/sources.list.d/`.
 
-#### Build Process Integration [optional]
+#### Build Process Integration
 
 No Dockerfile changes are needed beyond mounting the pre-fetched
-dependencies and the generated `sources.list`. Example usage in a
-multi-stage build:
+dependencies and the generated `sources.list`. The `hermeto.list` file
+references paths of the form `file://<for-output-dir>/deps/deb/<arch>/<repoid>`,
+so the directory structure relative to `for_output_dir` must be preserved
+in the build container. Example usage in a multi-stage build:
 
 ```dockerfile
 # Install pre-fetched packages
-COPY hermeto-output/deps/deb/amd64/ /tmp/deb/
+# Preserve the full directory structure so paths in hermeto.list resolve correctly
+COPY hermeto-output/ /tmp/hermeto-output/
 COPY hermeto-output/deps/deb/amd64/sources.list.d/ /etc/apt/sources.list.d/
 RUN apt-get update && apt-get install -y libssl3
 ```
+
+In this example, `for_output_dir` would be set to `/tmp/hermeto-output`
+so that the generated `hermeto.list` entries resolve to the correct
+paths within the container.
 
 ### PURL Generation
 
 PURLs follow the [PURL specification for deb packages](https://github.com/package-url/purl-spec/blob/master/PURL-TYPES.rst#deb):
 
 ```
-pkg:deb/<distro>/<name>@<version>?arch=<arch>&repository_id=<repoid>
+pkg:deb/<distro>/<name>@<version>?arch=<arch>[&checksum=<algo>:<digest>][&repository_id=<repoid>]
 ```
 
 The `<distro>` namespace comes from the `lockfileVendor` field, ensuring
@@ -268,13 +278,19 @@ accuracy per the PURL spec (e.g., `pkg:deb/debian/libssl3@3.0.9-1` vs.
 Unlike RPM, `.deb` files do not embed a vendor tag. The lockfileVendor
 field is the authoritative source for the PURL namespace.
 
-Example SBOM component:
+The `checksum` qualifier is included only when the lockfile provides a
+checksum. The `repository_id` qualifier is included only when the user
+explicitly sets `repoid` in the lockfile. Auto-generated repoid values
+are filtered out of PURLs to maintain SBOM reproducibility, consistent
+with the RPM backend.
+
+Example SBOM component (with checksum present in lockfile):
 
 ```json
 {
-  "bom-ref": "pkg:deb/debian/libssl3@3.0.9-1?arch=amd64&repository_id=bookworm-main",
+  "bom-ref": "pkg:deb/debian/libssl3@3.0.9-1?arch=amd64&checksum=sha256:a49b38d8...&repository_id=bookworm-main",
   "name": "libssl3",
-  "purl": "pkg:deb/debian/libssl3@3.0.9-1?arch=amd64&repository_id=bookworm-main",
+  "purl": "pkg:deb/debian/libssl3@3.0.9-1?arch=amd64&checksum=sha256:a49b38d8...&repository_id=bookworm-main",
   "version": "3.0.9-1",
   "properties": [{"name": "hermeto:found_by", "value": "hermeto"}],
   "type": "library"
@@ -307,8 +323,8 @@ The implementation closely follows the RPM backend structure:
    - `_verify_downloaded()`: Size and checksum verification (same logic
      as RPM).
    - `_generate_sbom_components()`: Extracts package name, version, and
-     architecture from `.deb` filenames or metadata, generates `pkg:deb`
-     PURLs.
+     architecture from `.deb` metadata via `dpkg-deb --showformat`,
+     generates `pkg:deb` PURLs.
    - `inject_files_post()`: Runs `dpkg-scanpackages` on each repoid
      directory to generate `Packages` indices, then writes a
      `hermeto.list` file to `sources.list.d/`.
@@ -322,13 +338,27 @@ The implementation closely follows the RPM backend structure:
 4. **Resolver registration** (`hermeto/core/resolver.py`):
    - Import deb backend
    - Register `"x-deb": deb.fetch_deb_source` in `_package_managers`
-   - Wire `inject_files_post` callback
+   - Wire `inject_files_post` callback: the current `inject_files_post`
+     function is hardcoded to dispatch only to the RPM module. The deb
+     backend needs a parallel dispatch block -- add an equivalent
+     `hasattr`/`getattr` check for the deb module, matching the existing
+     RPM pattern. A generic registry could replace these blocks in the
+     future, but that refactoring is out of scope for the initial
+     experimental landing.
 
 5. **Package metadata extraction**: Unlike RPM (which uses the `rpm`
    command to query tags from `.rpm` files), `.deb` metadata extraction
-   uses `dpkg-deb --showformat` or the `ar`/`tar` approach to read
-   the `control` file. The `dpkg-deb` tool is standard on Debian-based
-   systems.
+   uses `dpkg-deb --showformat` as the primary mechanism to read package
+   name, version, and architecture from the `control` file. This mirrors
+   the RPM backend's use of the `rpm` command for metadata queries.
+   The `dpkg-deb` tool is standard on Debian-based systems. The
+   alternative `ar`/`tar` approach (manually unpacking the `control`
+   file) could serve as a fallback but is not planned for the initial
+   implementation.
+
+   `dpkg-deb` is safe to run on untrusted `.deb` files in this context:
+   the `--showformat` flag performs metadata-only extraction and does not
+   execute any package scripts (preinst, postinst, etc.).
 
 ### Current Limitations
 
@@ -353,7 +383,7 @@ The implementation closely follows the RPM backend structure:
   each passed as a separate package input to hermeto. This ensures
   PURL namespaces remain accurate.
 
-## References [optional]
+## References
 
 - [PURL specification - deb type](https://github.com/package-url/purl-spec/blob/master/PURL-TYPES.rst#deb)
 - [Debian repository format](https://wiki.debian.org/DebianRepository/Format)
