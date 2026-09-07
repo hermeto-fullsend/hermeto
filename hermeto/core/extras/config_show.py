@@ -54,13 +54,17 @@ def _get_sensitive_field_names() -> frozenset[str]:
 
     Recursively collects all field names annotated as ``SecretStr`` across
     Config and its nested settings models (at any depth) so that the set
-    stays in sync with the schema automatically.
+    stays in sync with the schema automatically.  Recurses via both
+    field defaults and field annotations to cover required sub-model
+    fields that have no default value.
     """
     names: set[str] = set()
+    seen: set[type] = set()
 
     def _walk_model(model_cls: type) -> None:
-        if not hasattr(model_cls, "model_fields"):
+        if model_cls in seen or not hasattr(model_cls, "model_fields"):
             return
+        seen.add(model_cls)
         for field_name, field_info in model_cls.model_fields.items():
             annotation = field_info.annotation
             if annotation is SecretStr or (
@@ -71,6 +75,9 @@ def _get_sensitive_field_names() -> frozenset[str]:
             default = field_info.default
             if hasattr(type(default), "model_fields"):
                 _walk_model(type(default))
+            # Also check the annotation type for models without defaults
+            elif hasattr(annotation, "model_fields"):
+                _walk_model(annotation)
 
     _walk_model(Config)
     return frozenset(names)
@@ -195,6 +202,21 @@ def get_config_sources(
     for label, data in iter_config_file_data(config_file_path):
         _collect_fields_from_dict(data, label, file_fields)
 
+    def _env_covers(path: tuple[str, ...]) -> bool:
+        """Check if an env var covers *path* directly or via a parent.
+
+        A section-level env var like HERMETO_GOMOD (path ``("gomod",)``)
+        sets its value via a JSON-encoded string; every child field
+        should be attributed to "env".
+        """
+        if path in env_fields:
+            return True
+        # Check if any env var path is a prefix of the current path
+        for env_path in env_fields:
+            if path[: len(env_path)] == env_path and len(env_path) < len(path):
+                return True
+        return False
+
     # Walk effective config and assign sources
     def _walk(
         data: dict[str, Any],
@@ -207,7 +229,7 @@ def get_config_sources(
             # Empty dicts and all other types are leaf values.
             if isinstance(value, dict) and value:
                 sources[key] = _walk(value, current)
-            elif current in env_fields:
+            elif _env_covers(current):
                 sources[key] = "env"
             elif current in file_fields:
                 sources[key] = f"file: {file_fields[current]}"

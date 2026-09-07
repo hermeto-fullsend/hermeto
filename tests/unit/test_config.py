@@ -182,6 +182,50 @@ class TestGetRawConfigValues:
         assert raw["pip"]["proxy_password"] is None
 
 
+class TestRawConfigValuesMatchesModel:
+    """Drift detection: get_raw_config_values must stay in sync with Config().
+
+    get_raw_config_values() reimplements the merge order that pydantic-settings
+    performs internally.  This test exercises both code paths with the same
+    overrides so that any divergence is caught early.
+    """
+
+    def test_env_override_matches_model(self, monkeypatch: pytest.MonkeyPatch) -> None:
+        """Env var override must produce the same value via both code paths."""
+        for key in list(os.environ):
+            if key.startswith("HERMETO_") and not key.startswith("HERMETO_TEST_"):
+                monkeypatch.delenv(key)
+        monkeypatch.setattr("hermeto.core.config.CONFIG_FILE_PATHS", [])
+        monkeypatch.setenv("HERMETO_RUNTIME__CONCURRENCY_LIMIT", "42")
+
+        model_config = config_module.Config()
+        from hermeto.core.extras.config_show import get_effective_config
+
+        effective = get_effective_config(model_config)
+        raw = config_module.get_raw_config_values()
+
+        assert effective["runtime"]["concurrency_limit"] == raw["runtime"]["concurrency_limit"]
+
+    def test_config_file_override_matches_model(
+        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        """Config file override must produce the same value via both code paths."""
+        for key in list(os.environ):
+            if key.startswith("HERMETO_") and not key.startswith("HERMETO_TEST_"):
+                monkeypatch.delenv(key)
+        config_path = tmp_path / "hermeto.yaml"
+        _write_yaml_config(config_path, {"http": {"read_timeout": 600}})
+        monkeypatch.setattr("hermeto.core.config.CONFIG_FILE_PATHS", [str(config_path)])
+
+        model_config = config_module.Config()
+        from hermeto.core.extras.config_show import get_effective_config
+
+        effective = get_effective_config(model_config)
+        raw = config_module.get_raw_config_values()
+
+        assert effective["http"]["read_timeout"] == raw["http"]["read_timeout"]
+
+
 class TestNormalizeConfigData:
     """Tests for the standalone normalization function."""
 

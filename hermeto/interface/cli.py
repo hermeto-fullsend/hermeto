@@ -169,12 +169,7 @@ def version_callback(value: bool) -> None:
     raise typer.Exit()
 
 
-# invoke_without_command=True makes the callback run even when NO subcommand
-# is given (e.g. bare ``hermeto --log-level debug``).  The callback already
-# runs before subcommands regardless of this flag; the flag is needed so
-# that main() can also handle the no-subcommand case (mitigated by
-# no_args_is_help=True on the app).
-@app.callback(invoke_without_command=True)
+@app.callback()
 @handle_errors
 def main(  # noqa: D103 -- docstring becomes part of --help message
     ctx: typer.Context,

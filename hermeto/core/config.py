@@ -3,8 +3,9 @@
 
 In addition to the ``Config`` model and ``get_config`` / ``set_config``,
 this module exposes several display-support functions
-(``get_config_defaults``, ``get_hermeto_env_vars``, ``iter_config_file_data``,
-``get_raw_config_values``) that are consumed by ``config_show.py``.  They
+(``get_config_defaults``, ``get_hermeto_env_vars``,
+``iter_config_file_data``, ``get_raw_config_values``) that are consumed
+by ``config_show.py``.  They
 live here rather than in ``config_show.py`` because they need direct access
 to ``Config`` internals (``model_fields``, ``model_config``,
 ``CONFIG_FILE_PATHS``).  Moving them would create a circular import.
@@ -428,7 +429,7 @@ def get_config_defaults() -> dict[str, Any]:
     return result
 
 
-def read_normalized_yaml(path: Path) -> dict[str, Any] | None:
+def _read_normalized_yaml(path: Path) -> dict[str, Any] | None:
     """Read and normalize a YAML config file, returning None on failure.
 
     Returns the normalized dict on success, or None if the file cannot be
@@ -520,11 +521,11 @@ def iter_config_file_data(
     for path_str in CONFIG_FILE_PATHS:
         path = Path(path_str).expanduser()
         if path.exists():
-            normalized = read_normalized_yaml(path)
+            normalized = _read_normalized_yaml(path)
             if normalized is not None:
                 yield (path_str, normalized)
     if config_path and config_path.exists():
-        normalized = read_normalized_yaml(config_path)
+        normalized = _read_normalized_yaml(config_path)
         if normalized is not None:
             yield (str(config_path), normalized)
 
