@@ -320,7 +320,7 @@ The implementation closely follows the RPM backend structure:
 1. **Lockfile model** (`hermeto/core/package_managers/deb/models.py`):
    Pydantic models for `debs.lock.yaml` parsing, similar to
    `hermeto/core/package_managers/rpm/redhat.py`. The `lockfileVendor`
-   validator accepts any string (unlike RPM's `"redhat"` restriction),
+   validator accepts any non-empty string (unlike RPM's `"redhat"` restriction),
    since the deb ecosystem spans multiple distributions.
 
 2. **Main module** (`hermeto/core/package_managers/deb/main.py`):
@@ -388,9 +388,9 @@ The implementation closely follows the RPM backend structure:
   by hermeto).
 - **Hardcoded `inject_files_post` dispatch**: The initial implementation
   adds a parallel dispatch block in `resolver.py` for the deb backend,
-  duplicating the existing RPM-specific pattern. Refactoring to a generic
-  `inject_files_post` registry should be tracked as a follow-up issue
-  after the experimental landing stabilizes.
+  duplicating the existing RPM-specific pattern. A tracking issue for
+  refactoring to a generic `inject_files_post` registry must be filed
+  before the deb backend moves out of the `x-` experimental prefix.
 - **Mixed-distro lockfiles**: A single lockfile can only declare one
   `lockfileVendor`. Users building images that combine packages from
   both Debian and Ubuntu must use separate lockfiles (one per distro),
