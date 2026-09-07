@@ -446,7 +446,7 @@ def _coerce_scalar(value: Any) -> bool | int | float | str | None:
         return True
     if lower == "false":
         return False
-    if lower in ("null", "none") or value == "":
+    if lower in ("null", "none"):
         return None
     try:
         return int(value)

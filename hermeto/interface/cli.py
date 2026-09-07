@@ -13,6 +13,7 @@ from typing import Any
 import pydantic
 import typer
 
+import hermeto.core.config as _config_module
 from hermeto import APP_NAME
 from hermeto.core.config import get_config, get_raw_config_values, set_config
 from hermeto.core.constants import Mode
@@ -165,9 +166,11 @@ def version_callback(value: bool) -> None:
     raise typer.Exit()
 
 
-# invoke_without_command=True is needed so the callback runs even when a
-# subcommand (like ``config``) is invoked, allowing global options (e.g.
-# --config-file, --log-level) to take effect before the subcommand executes.
+# invoke_without_command=True makes the callback run even when NO subcommand
+# is given (e.g. bare ``hermeto --log-level debug``).  The callback already
+# runs before subcommands regardless of this flag; the flag is needed so
+# that main() can also handle the no-subcommand case (mitigated by
+# no_args_is_help=True on the app).
 @app.callback(invoke_without_command=True)
 @handle_errors
 def main(  # noqa: D103 -- docstring becomes part of --help message
@@ -285,13 +288,22 @@ def config(
     """Show the current effective configuration with source annotations."""
     config_file_path: Path | None = None
     if ctx.parent:
-        config_file_path = ctx.parent.params.get("config_file")
+        raw_path = ctx.parent.params.get("config_file")
+        if raw_path is not None:
+            config_file_path = Path(raw_path)
 
     validation_error: str | None = None
     try:
-        if config_file_path:
+        if config_file_path and _config_module.config is None:
+            # main() returned early (validation error + config subcommand):
+            # the global singleton is unset.  Attempt to load the CLI config
+            # file to either succeed or trigger the error path for graceful
+            # degradation display.
             current_config = set_config(config_file_path)
         else:
+            # main() already initialised the singleton (with --mode override
+            # and CLI config file, if any).  Reuse it to avoid clobbering
+            # overrides such as --mode.
             current_config = get_config()
         effective = get_effective_config(current_config, raw=raw)
     except InvalidInput as e:

@@ -10,6 +10,7 @@ from pathlib import Path
 from typing import Any
 
 import yaml
+from pydantic import SecretStr
 
 from hermeto.core.config import (
     Config,
@@ -55,8 +56,6 @@ def _get_sensitive_field_names() -> frozenset[str]:
     nested settings models so that the set stays in sync with the schema
     automatically.
     """
-    from pydantic import SecretStr
-
     names: set[str] = set()
     for field_info in Config.model_fields.values():
         default = field_info.default

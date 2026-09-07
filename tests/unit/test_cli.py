@@ -306,6 +306,21 @@ class TestTopLevelOpts:
             mock_resolve.side_effect = side_effect
             invoke_expecting_sucess(app, args)
 
+    @pytest.mark.usefixtures("_clean_hermeto_env")
+    def test_config_preserves_mode_with_config_file(self, tmp_cwd: Path) -> None:
+        """Config command should preserve --mode override set by main()."""
+        config_path = tmp_cwd / "config.yaml"
+        config_path.write_text(yaml.dump({"gomod": {"download_max_tries": 10}}))
+
+        config_file.config = None
+        result = invoke_expecting_sucess(
+            app, ["--config-file", str(config_path), "--mode", "permissive", "config"]
+        )
+        config_file.config = None
+
+        parsed = yaml.safe_load(result.output)
+        assert parsed["mode"] == "permissive"
+
     def test_mode_option_is_not_valid(self) -> None:
         args = ["--mode", "invalid", "fetch-deps", "gomod"]
         with mock_fetch_deps():
