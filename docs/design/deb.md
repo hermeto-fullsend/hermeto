@@ -227,7 +227,7 @@ install pre-fetched packages offline:
 Content of the generated `hermeto.list` file:
 
 ```
-deb [trusted=yes] file://<for_output_dir>/deps/deb/<arch>/<repoid> ./
+deb [trusted=yes] file://<for-output-dir>/deps/deb/<arch>/<repoid> ./
 ```
 
 The `[trusted=yes]` option tells APT to skip GPG signature verification
@@ -256,8 +256,8 @@ be mounted into the build container as `/etc/apt/sources.list.d/`.
 
 No Dockerfile changes are needed beyond mounting the pre-fetched
 dependencies and the generated `sources.list`. The `hermeto.list` file
-references paths of the form `file://<for_output_dir>/deps/deb/<arch>/<repoid>`,
-so the directory structure relative to `for_output_dir` must be preserved
+references paths of the form `file://<for-output-dir>/deps/deb/<arch>/<repoid>`,
+so the directory structure relative to `<for-output-dir>` must be preserved
 in the build container. Example usage in a multi-stage build:
 
 ```dockerfile
@@ -268,7 +268,7 @@ COPY hermeto-output/deps/deb/amd64/sources.list.d/ /etc/apt/sources.list.d/
 RUN apt-get update && apt-get install -y libssl3
 ```
 
-In this example, `for_output_dir` would be set to `/tmp/hermeto-output`
+In this example, `<for-output-dir>` would be set to `/tmp/hermeto-output`
 so that the generated `hermeto.list` entries resolve to the correct
 paths within the container.
 
@@ -386,6 +386,11 @@ The implementation closely follows the RPM backend structure:
   functionally sufficient for hermetic builds but means APT will not
   verify repository-level signatures (per-file checksums are verified
   by hermeto).
+- **Hardcoded `inject_files_post` dispatch**: The initial implementation
+  adds a parallel dispatch block in `resolver.py` for the deb backend,
+  duplicating the existing RPM-specific pattern. Refactoring to a generic
+  `inject_files_post` registry should be tracked as a follow-up issue
+  after the experimental landing stabilizes.
 - **Mixed-distro lockfiles**: A single lockfile can only declare one
   `lockfileVendor`. Users building images that combine packages from
   both Debian and Ubuntu must use separate lockfiles (one per distro),
