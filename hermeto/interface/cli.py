@@ -214,11 +214,12 @@ def main(  # noqa: D103 -- docstring becomes part of --help message
             current_config = get_config()
         # Typer ensures `mode` is already a valid Mode enum value
         current_config.mode = mode
-    except InvalidInput:
+    except InvalidInput as e:
         # Let the config subcommand handle validation errors gracefully
-        # so it can display diagnostic output even with invalid config
+        # so it can display diagnostic output even with invalid config.
+        # Pass the error message so config() can skip re-validation.
         if ctx.invoked_subcommand == "config":
-            ctx.obj = {"config_error": True}
+            ctx.obj = {"config_error": True, "config_error_message": e.friendly_msg()}
             return
         raise
 
@@ -294,22 +295,21 @@ def config(
     config_error = (ctx.obj or {}).get("config_error", False)
 
     validation_error: str | None = None
-    try:
-        if config_file_path and config_error:
-            # main() signalled a validation error via ctx.obj: the global
-            # singleton is unset.  Attempt to load the CLI config file to
-            # either succeed or trigger the error path for graceful
-            # degradation display.
-            current_config = set_config(config_file_path)
-        else:
+    if config_error:
+        # main() already caught the InvalidInput — no need to re-validate,
+        # it would fail with the same result.  Go straight to raw display.
+        effective = redact_sensitive_fields(get_raw_config_values(config_file_path), raw=raw)
+        validation_error = (ctx.obj or {}).get("config_error_message")
+    else:
+        try:
             # main() already initialised the singleton (with --mode override
             # and CLI config file, if any).  Reuse it to avoid clobbering
             # overrides such as --mode.
             current_config = get_config()
-        effective = get_effective_config(current_config, raw=raw)
-    except InvalidInput as e:
-        effective = redact_sensitive_fields(get_raw_config_values(config_file_path), raw=raw)
-        validation_error = e.friendly_msg()
+            effective = get_effective_config(current_config, raw=raw)
+        except InvalidInput as e:
+            effective = redact_sensitive_fields(get_raw_config_values(config_file_path), raw=raw)
+            validation_error = e.friendly_msg()
 
     defaults = get_default_config()
 
