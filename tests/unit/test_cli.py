@@ -153,6 +153,59 @@ class TestTopLevelOpts:
         assert "s3cret-value" in result.output
         assert "**********" not in result.output
 
+    @pytest.mark.usefixtures("_clean_hermeto_env")
+    def test_config_shows_source_annotations(self, monkeypatch: pytest.MonkeyPatch) -> None:
+        """Config output should include source annotations showing value origins."""
+        monkeypatch.setenv("HERMETO_RUNTIME__CONCURRENCY_LIMIT", "10")
+
+        config_file.config = None
+        result = invoke_expecting_sucess(app, ["config"])
+        config_file.config = None
+
+        assert "[env]" in result.output
+        assert "[default]" in result.output
+        assert "Source shown in brackets" in result.output
+
+    @pytest.mark.usefixtures("_clean_hermeto_env")
+    def test_config_with_invalid_config_shows_output(self) -> None:
+        """Config command should still produce output when validation fails."""
+        env = {
+            "HERMETO_PIP__PROXY_LOGIN": "user-without-password",
+        }
+        with mock.patch.dict(os.environ, env):
+            config_file.config = None
+            result = runner.invoke(app, ["config"])
+        config_file.config = None
+
+        assert result.exit_code == 1
+        # Should still produce config output (not just an error)
+        assert "pip:" in result.output
+        assert "proxy_login: user-without-password" in result.output
+        # Source annotation should identify the env var
+        assert "[env]" in result.output
+
+    @pytest.mark.usefixtures("_clean_hermeto_env")
+    def test_config_diff_with_invalid_config_shows_output(self) -> None:
+        """Config --diff should still produce output when validation fails."""
+        env = {
+            "HERMETO_PIP__PROXY_LOGIN": "user-without-password",
+        }
+        with mock.patch.dict(os.environ, env):
+            config_file.config = None
+            result = runner.invoke(app, ["config", "--diff"])
+        config_file.config = None
+
+        assert result.exit_code == 1
+        # Should still produce diff output showing the non-default value
+        assert "proxy_login" in result.output
+
+    def test_bare_hermeto_shows_help(self) -> None:
+        """Running hermeto with no subcommand should produce help output."""
+        result = runner.invoke(app, [])
+        # no_args_is_help=True makes typer exit with code 0 after printing help,
+        # but CliRunner reports exit code 2 for missing required arguments
+        assert "Usage" in result.output
+
     @pytest.mark.parametrize(
         "config_values",
         [
@@ -253,6 +306,21 @@ class TestTopLevelOpts:
         with mock.patch("hermeto.interface.cli.resolve_packages") as mock_resolve:
             mock_resolve.side_effect = side_effect
             invoke_expecting_sucess(app, args)
+
+    @pytest.mark.usefixtures("_clean_hermeto_env")
+    def test_config_preserves_mode_with_config_file(self, tmp_cwd: Path) -> None:
+        """Config command should preserve --mode override set by main()."""
+        config_path = tmp_cwd / "config.yaml"
+        config_path.write_text(yaml.dump({"gomod": {"download_max_tries": 10}}))
+
+        config_file.config = None
+        result = invoke_expecting_sucess(
+            app, ["--config-file", str(config_path), "--mode", "permissive", "config"]
+        )
+        config_file.config = None
+
+        parsed = yaml.safe_load(result.output)
+        assert parsed["mode"] == "permissive"
 
     def test_mode_option_is_not_valid(self) -> None:
         args = ["--mode", "invalid", "fetch-deps", "gomod"]

@@ -14,15 +14,17 @@ import pydantic
 import typer
 
 from hermeto import APP_NAME
-from hermeto.core.config import get_config, set_config
+from hermeto.core.config import get_config, get_raw_config_values, set_config
 from hermeto.core.constants import Mode
 from hermeto.core.errors import BaseError, InvalidInput, UnexpectedFormat
 from hermeto.core.extras.config_show import (
     format_diff_output,
     format_yaml_output,
     get_config_diff,
+    get_config_sources,
     get_default_config,
     get_effective_config,
+    redact_sensitive_fields,
 )
 from hermeto.core.extras.envfile import EnvFormat, generate_envfile
 from hermeto.core.models.input import Flag, PackageInput, Request, parse_user_input
@@ -42,6 +44,10 @@ log = logging.getLogger(__name__)
 
 DEFAULT_SOURCE = "."
 DEFAULT_OUTPUT = f"./{APP_NAME}-output"
+# Name of the --config-file CLI option in typer's params dict.
+# Extracted as a constant so a rename does not silently break the
+# string lookup in the config subcommand.
+_CONFIG_FILE_PARAM = "config_file"
 
 FETCH_DEPS_HELP = f"""\
     Fetch dependencies for supported package managers.
@@ -166,6 +172,7 @@ def version_callback(value: bool) -> None:
 @app.callback()
 @handle_errors
 def main(  # noqa: D103 -- docstring becomes part of --help message
+    ctx: typer.Context,
     version: bool = typer.Option(  # noqa: ARG001
         False,
         "--version",
@@ -200,12 +207,21 @@ def main(  # noqa: D103 -- docstring becomes part of --help message
     ),
 ) -> None:
     setup_logging(log_level, color=color)
-    if config_file:
-        config = set_config(config_file)
-    else:
-        config = get_config()
-    # Typer ensures `mode` is already a valid Mode enum value
-    config.mode = mode
+    try:
+        if config_file:
+            current_config = set_config(config_file)
+        else:
+            current_config = get_config()
+        # Typer ensures `mode` is already a valid Mode enum value
+        current_config.mode = mode
+    except InvalidInput as e:
+        # Let the config subcommand handle validation errors gracefully
+        # so it can display diagnostic output even with invalid config.
+        # Pass the error message so config() can skip re-validation.
+        if ctx.invoked_subcommand == "config":
+            ctx.obj = {"config_error": True, "config_error_message": e.friendly_msg()}
+            return
+        raise
 
 
 def _if_json_then_validate(value: str) -> str:
@@ -257,6 +273,7 @@ def list_backends() -> None:
 @app.command()
 @handle_errors
 def config(
+    ctx: typer.Context,
     diff: bool = typer.Option(
         False,
         "--diff",
@@ -268,16 +285,53 @@ def config(
         help="Show sensitive values (e.g. passwords) without redaction.",
     ),
 ) -> None:
-    """Show the current effective configuration."""
-    current_config = get_config()
-    effective = get_effective_config(current_config, raw=raw)
+    """Show the current effective configuration with source annotations."""
+    config_file_path: Path | None = None
+    if ctx.parent:
+        raw_path = ctx.parent.params.get(_CONFIG_FILE_PARAM)
+        if raw_path is not None:
+            config_file_path = Path(raw_path)
+
+    config_error = (ctx.obj or {}).get("config_error", False)
+
+    validation_error: str | None = None
+    if config_error:
+        # main() already caught the InvalidInput — no need to re-validate,
+        # it would fail with the same result.  Go straight to raw display.
+        effective = redact_sensitive_fields(get_raw_config_values(config_file_path), raw=raw)
+        validation_error = (ctx.obj or {}).get("config_error_message")
+    else:
+        try:
+            # main() already initialised the singleton (with --mode override
+            # and CLI config file, if any).  Reuse it to avoid clobbering
+            # overrides such as --mode.
+            current_config = get_config()
+            effective = get_effective_config(current_config, raw=raw)
+        except InvalidInput as e:
+            effective = redact_sensitive_fields(get_raw_config_values(config_file_path), raw=raw)
+            validation_error = e.friendly_msg()
+
     defaults = get_default_config()
 
     if diff:
         config_diff = get_config_diff(effective, defaults)
         print(format_diff_output(config_diff))
     else:
-        print(format_yaml_output(effective, defaults))
+        sources = get_config_sources(effective, config_file_path=config_file_path)
+        print(format_yaml_output(effective, defaults, sources=sources))
+
+    if validation_error:
+        print(
+            f"\nConfiguration has validation errors:\n{validation_error}",
+            file=sys.stderr,
+        )
+        if not diff:
+            print(
+                "\nTip: review the [source] annotations above to identify which"
+                " config source provides the problematic values.",
+                file=sys.stderr,
+            )
+        raise typer.Exit(code=1)
 
 
 @app.command(help=FETCH_DEPS_HELP)
