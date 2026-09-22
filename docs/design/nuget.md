@@ -152,7 +152,7 @@ accept both versions.
 | `resolved` | The exact resolved version (e.g., `13.0.3`) | All |
 | `contentHash` | Base64-encoded SHA-512 hash of the package content | All non-project |
 | `dependencies` | Map of the package's own dependencies (`"id": "version"`) | All |
-| `requested` | Version range from the project file (e.g., `[13.0.3, )`) | `Direct` only |
+| `requested` | Version range from the project file or `Directory.Packages.props` (e.g., `[13.0.3, )`) | `Direct` and `CentralTransitive` |
 
 The top-level key under `dependencies` is the
 [Target Framework Moniker](https://learn.microsoft.com/en-us/dotnet/standard/frameworks)
