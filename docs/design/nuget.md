@@ -348,12 +348,13 @@ PURLs for NuGet packages follow the
 [PURL specification](https://github.com/package-url/purl-spec/blob/master/PURL-TYPES.rst#nuget):
 
 ```
-pkg:nuget/Newtonsoft.Json@13.0.3
+pkg:nuget/newtonsoft.json@13.0.3
 ```
 
-The PURL type is `nuget`, the name preserves the original casing from the lockfile, and the
-version is the resolved version string. Checksums should be included as qualifiers where
-available.
+The PURL type is `nuget`, the name must be lowercased per the
+[PURL specification](https://github.com/package-url/purl-spec/blob/master/PURL-TYPES.rst#nuget),
+and the version is the resolved version string. Checksums should be included as qualifiers
+where available.
 
 ### Content Hash Verification
 
