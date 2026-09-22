@@ -283,3 +283,65 @@ async def test_async_download_preserves_redirect_url_encoding(tmp_path: Path) ->
         download_path = tmp_path / "artifact"
         await async_download_files({url: str(download_path)}, concurrency_limit=1)
         assert b"text%2Fplain" in download_path.read_bytes()
+
+
+@pytest.mark.asyncio
+async def test_async_download_retries_on_timeout(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Download must retry on asyncio.TimeoutError instead of failing immediately."""
+    from aiohttp import web
+    from aiohttp.test_utils import TestServer
+
+    attempt_count = 0
+
+    async def handler(request: web.Request) -> web.Response:
+        nonlocal attempt_count
+        attempt_count += 1
+        if attempt_count == 1:
+            # Stall longer than the read timeout to trigger asyncio.TimeoutError
+            await asyncio.sleep(10)
+        return web.Response(status=200, body=b"downloaded-ok")
+
+    app = web.Application()
+    app.router.add_get("/artifact.rpm", handler)
+
+    # Short read timeout so the first attempt times out quickly
+    monkeypatch.setenv("HERMETO_HTTP__READ_TIMEOUT", "1")
+    monkeypatch.setenv("HERMETO_HTTP__MAX_RETRIES", "3")
+    monkeypatch.setattr("hermeto.core.config.config", None)
+
+    async with TestServer(app) as server:
+        url = str(server.make_url("/artifact.rpm"))
+        download_path = tmp_path / "artifact.rpm"
+        await async_download_files({url: str(download_path)}, concurrency_limit=1)
+        assert download_path.read_bytes() == b"downloaded-ok"
+        # Must have retried at least once after the timeout
+        assert attempt_count >= 2
+
+
+@pytest.mark.asyncio
+async def test_async_download_timeout_raises_fetch_error_after_retries(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """FetchError must be raised when all retry attempts time out."""
+    from aiohttp import web
+    from aiohttp.test_utils import TestServer
+
+    async def handler(request: web.Request) -> web.Response:
+        # Always stall beyond the read timeout
+        await asyncio.sleep(10)
+        return web.Response(status=200, body=b"never-reached")
+
+    app = web.Application()
+    app.router.add_get("/artifact.rpm", handler)
+
+    monkeypatch.setenv("HERMETO_HTTP__READ_TIMEOUT", "1")
+    monkeypatch.setenv("HERMETO_HTTP__MAX_RETRIES", "1")
+    monkeypatch.setattr("hermeto.core.config.config", None)
+
+    async with TestServer(app) as server:
+        url = str(server.make_url("/artifact.rpm"))
+        download_path = tmp_path / "artifact.rpm"
+        with pytest.raises(FetchError):
+            await async_download_files({url: str(download_path)}, concurrency_limit=1)
