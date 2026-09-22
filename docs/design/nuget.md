@@ -380,7 +380,7 @@ literally absent from the lockfile. For NuGet, the hash IS present in
 `packages.lock.json` — the challenge is reproducing the verification algorithm. Using
 `missing_hash:in_file` with different semantics would create an inconsistency. If this
 fallback is needed, the new property should be documented in
-[`docs/sbom.md`](../sbom.md) and added to `property_semantics.py`.
+[`docs/sbom.md`](../sbom.md) and added to [`hermeto/core/models/property_semantics.py`](../../hermeto/core/models/property_semantics.py).
 
 ### Current Limitations
 
