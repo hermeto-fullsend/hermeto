@@ -113,6 +113,12 @@ The lockfile is a JSON file named `packages.lock.json` located at the project ro
 
 **Structure:**
 
+Note: the lockfile `"version"` field is `1` for standard `PackageReference` projects and
+`2` for projects using
+[Central Package Management](https://learn.microsoft.com/en-us/nuget/consume-packages/central-package-management)
+(CPM). Version 2 lockfiles include `CentralTransitive` dependency types. Hermeto must
+accept both versions.
+
 ```json
 {
   "version": 1,
@@ -168,10 +174,11 @@ The top-level key under `dependencies` is the
 > [!IMPORTANT]
 > Because the `contentHash` excludes signature content, verifying it requires
 > re-computing the hash with the same exclusion logic — a raw SHA-512 of the downloaded
-> `.nupkg` file will not match. Hermeto must unzip the `.nupkg`, exclude
-> `.signature.p7s`, and hash the remaining content using the same algorithm NuGet uses
-> internally (via sorted entry enumeration). The exact algorithm is documented in the
-> [NuGet client source](https://github.com/NuGet/NuGet.Client).
+> `.nupkg` file will not match. Hermeto must create a modified copy of the `.nupkg` ZIP
+> archive with the `.signature.p7s` entry removed, then compute SHA-512 over the
+> resulting ZIP byte stream. The algorithm is implemented in
+> [`SignedPackageArchiveUtility`](https://github.com/NuGet/NuGet.Client) in the NuGet
+> client source.
 
 ### Fetching Content
 
@@ -351,20 +358,29 @@ available.
 ### Content Hash Verification
 
 The primary implementation challenge is reproducing NuGet's `contentHash` computation. The
-hash is a SHA-512 over the package content excluding `.signature.p7s`. The exact algorithm
-involves:
+hash is a SHA-512 over the package ZIP byte stream excluding the `.signature.p7s` entry.
+The exact algorithm involves:
 
 1. Opening the `.nupkg` as a ZIP archive.
-2. Enumerating entries in a sorted, normalized order.
-3. Excluding `.signature.p7s` and computing SHA-512 over the remaining content.
+2. Creating a modified copy of the archive with the `.signature.p7s` entry removed.
+3. Computing SHA-512 over the entire resulting ZIP byte stream (including all ZIP headers
+   and structural metadata, not just concatenated entry contents).
 
 The implementation must match NuGet's internal
-[`PackageArchiveReader.GetContentHash()`](https://github.com/NuGet/NuGet.Client) behavior
-exactly. Differences in entry ordering or normalization will produce mismatched hashes.
+[`SignedPackageArchiveUtility`](https://github.com/NuGet/NuGet.Client) behavior exactly.
+The hash covers the full ZIP binary structure, so any difference in how the modified
+archive is written (e.g., header ordering or padding) will produce mismatched hashes.
 
 If exact reproduction proves infeasible, Hermeto can fall back to recording the hash from
-the lockfile in the SBOM without verification, marking those dependencies with
-`hermeto:missing_hash:in_file` as other backends do for unverified checksums.
+the lockfile in the SBOM without verification. In this case, a new property such as
+`hermeto:unverified_hash` should be used rather than the existing
+`hermeto:missing_hash:in_file`. The `missing_hash:in_file` property has specific semantics
+across all existing backends (gomod, npm, pip, rpm): it indicates that a checksum is
+literally absent from the lockfile. For NuGet, the hash IS present in
+`packages.lock.json` — the challenge is reproducing the verification algorithm. Using
+`missing_hash:in_file` with different semantics would create an inconsistency. If this
+fallback is needed, the new property should be documented in
+[`docs/sbom.md`](../sbom.md) and added to `property_semantics.py`.
 
 ### Current Limitations
 
