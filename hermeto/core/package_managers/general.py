@@ -246,6 +246,7 @@ async def async_download_files(
         exceptions={
             aiohttp.ClientConnectionError,
             aiohttp.ClientPayloadError,
+            asyncio.TimeoutError,
         },
     )
 
