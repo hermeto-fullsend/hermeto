@@ -1,0 +1,326 @@
+{
+  "annotations": [
+    {
+      "annotator": {
+        "organization": {
+          "name": "red hat"
+        }
+      },
+      "subjects": [
+        "pkg:npm/%40pnpm/exe.android-arm64@12.11.2",
+        "pkg:npm/%40pnpm/exe.android-x64@12.11.2",
+        "pkg:npm/%40pnpm/exe.darwin-arm64@12.11.2",
+        "pkg:npm/%40pnpm/exe.darwin-x64@12.11.2",
+        "pkg:npm/%40pnpm/exe.freebsd-x64@12.11.2",
+        "pkg:npm/%40pnpm/exe.linux-arm64-musl@12.11.2",
+        "pkg:npm/%40pnpm/exe.linux-arm64@12.11.2",
+        "pkg:npm/%40pnpm/exe.linux-ppc64@12.11.2",
+        "pkg:npm/%40pnpm/exe.linux-riscv64@12.11.2",
+        "pkg:npm/%40pnpm/exe.linux-s390x@12.11.2",
+        "pkg:npm/%40pnpm/exe.linux-x64-musl@12.11.2",
+        "pkg:npm/%40pnpm/exe.linux-x64@12.11.2",
+        "pkg:npm/%40pnpm/exe.win32-arm64@12.11.2",
+        "pkg:npm/%40pnpm/exe.win32-x64@12.11.2",
+        "pkg:npm/integration-tests@1.0.0?vcs_url=git%2Bhttps://github.com/hermetoproject/hermeto.git%40672a5207ca00a3b42a371fe454f45981ef2ef6c7",
+        "pkg:npm/is-number@7.0.0",
+        "pkg:npm/pnpm@12.11.2"
+      ],
+      "text": "hermeto:backend:pnpm",
+      "timestamp": "2025-01-01T00:00:00Z"
+    }
+  ],
+  "bomFormat": "CycloneDX",
+  "components": [
+    {
+      "bom-ref": "pkg:npm/%40pnpm/exe.android-arm64@12.11.2",
+      "name": "exe.android-arm64",
+      "properties": [
+        {
+          "name": "cdx:npm:package:development",
+          "value": "true"
+        },
+        {
+          "name": "hermeto:found_by",
+          "value": "hermeto"
+        }
+      ],
+      "purl": "pkg:npm/%40pnpm/exe.android-arm64@12.11.2",
+      "type": "library",
+      "version": "12.11.2"
+    },
+    {
+      "bom-ref": "pkg:npm/%40pnpm/exe.android-x64@12.11.2",
+      "name": "exe.android-x64",
+      "properties": [
+        {
+          "name": "cdx:npm:package:development",
+          "value": "true"
+        },
+        {
+          "name": "hermeto:found_by",
+          "value": "hermeto"
+        }
+      ],
+      "purl": "pkg:npm/%40pnpm/exe.android-x64@12.11.2",
+      "type": "library",
+      "version": "12.11.2"
+    },
+    {
+      "bom-ref": "pkg:npm/%40pnpm/exe.darwin-arm64@12.11.2",
+      "name": "exe.darwin-arm64",
+      "properties": [
+        {
+          "name": "cdx:npm:package:development",
+          "value": "true"
+        },
+        {
+          "name": "hermeto:found_by",
+          "value": "hermeto"
+        }
+      ],
+      "purl": "pkg:npm/%40pnpm/exe.darwin-arm64@12.11.2",
+      "type": "library",
+      "version": "12.11.2"
+    },
+    {
+      "bom-ref": "pkg:npm/%40pnpm/exe.darwin-x64@12.11.2",
+      "name": "exe.darwin-x64",
+      "properties": [
+        {
+          "name": "cdx:npm:package:development",
+          "value": "true"
+        },
+        {
+          "name": "hermeto:found_by",
+          "value": "hermeto"
+        }
+      ],
+      "purl": "pkg:npm/%40pnpm/exe.darwin-x64@12.11.2",
+      "type": "library",
+      "version": "12.11.2"
+    },
+    {
+      "bom-ref": "pkg:npm/%40pnpm/exe.freebsd-x64@12.11.2",
+      "name": "exe.freebsd-x64",
+      "properties": [
+        {
+          "name": "cdx:npm:package:development",
+          "value": "true"
+        },
+        {
+          "name": "hermeto:found_by",
+          "value": "hermeto"
+        }
+      ],
+      "purl": "pkg:npm/%40pnpm/exe.freebsd-x64@12.11.2",
+      "type": "library",
+      "version": "12.11.2"
+    },
+    {
+      "bom-ref": "pkg:npm/%40pnpm/exe.linux-arm64-musl@12.11.2",
+      "name": "exe.linux-arm64-musl",
+      "properties": [
+        {
+          "name": "cdx:npm:package:development",
+          "value": "true"
+        },
+        {
+          "name": "hermeto:found_by",
+          "value": "hermeto"
+        }
+      ],
+      "purl": "pkg:npm/%40pnpm/exe.linux-arm64-musl@12.11.2",
+      "type": "library",
+      "version": "12.11.2"
+    },
+    {
+      "bom-ref": "pkg:npm/%40pnpm/exe.linux-arm64@12.11.2",
+      "name": "exe.linux-arm64",
+      "properties": [
+        {
+          "name": "cdx:npm:package:development",
+          "value": "true"
+        },
+        {
+          "name": "hermeto:found_by",
+          "value": "hermeto"
+        }
+      ],
+      "purl": "pkg:npm/%40pnpm/exe.linux-arm64@12.11.2",
+      "type": "library",
+      "version": "12.11.2"
+    },
+    {
+      "bom-ref": "pkg:npm/%40pnpm/exe.linux-ppc64@12.11.2",
+      "name": "exe.linux-ppc64",
+      "properties": [
+        {
+          "name": "cdx:npm:package:development",
+          "value": "true"
+        },
+        {
+          "name": "hermeto:found_by",
+          "value": "hermeto"
+        }
+      ],
+      "purl": "pkg:npm/%40pnpm/exe.linux-ppc64@12.11.2",
+      "type": "library",
+      "version": "12.11.2"
+    },
+    {
+      "bom-ref": "pkg:npm/%40pnpm/exe.linux-riscv64@12.11.2",
+      "name": "exe.linux-riscv64",
+      "properties": [
+        {
+          "name": "cdx:npm:package:development",
+          "value": "true"
+        },
+        {
+          "name": "hermeto:found_by",
+          "value": "hermeto"
+        }
+      ],
+      "purl": "pkg:npm/%40pnpm/exe.linux-riscv64@12.11.2",
+      "type": "library",
+      "version": "12.11.2"
+    },
+    {
+      "bom-ref": "pkg:npm/%40pnpm/exe.linux-s390x@12.11.2",
+      "name": "exe.linux-s390x",
+      "properties": [
+        {
+          "name": "cdx:npm:package:development",
+          "value": "true"
+        },
+        {
+          "name": "hermeto:found_by",
+          "value": "hermeto"
+        }
+      ],
+      "purl": "pkg:npm/%40pnpm/exe.linux-s390x@12.11.2",
+      "type": "library",
+      "version": "12.11.2"
+    },
+    {
+      "bom-ref": "pkg:npm/%40pnpm/exe.linux-x64-musl@12.11.2",
+      "name": "exe.linux-x64-musl",
+      "properties": [
+        {
+          "name": "cdx:npm:package:development",
+          "value": "true"
+        },
+        {
+          "name": "hermeto:found_by",
+          "value": "hermeto"
+        }
+      ],
+      "purl": "pkg:npm/%40pnpm/exe.linux-x64-musl@12.11.2",
+      "type": "library",
+      "version": "12.11.2"
+    },
+    {
+      "bom-ref": "pkg:npm/%40pnpm/exe.linux-x64@12.11.2",
+      "name": "exe.linux-x64",
+      "properties": [
+        {
+          "name": "cdx:npm:package:development",
+          "value": "true"
+        },
+        {
+          "name": "hermeto:found_by",
+          "value": "hermeto"
+        }
+      ],
+      "purl": "pkg:npm/%40pnpm/exe.linux-x64@12.11.2",
+      "type": "library",
+      "version": "12.11.2"
+    },
+    {
+      "bom-ref": "pkg:npm/%40pnpm/exe.win32-arm64@12.11.2",
+      "name": "exe.win32-arm64",
+      "properties": [
+        {
+          "name": "cdx:npm:package:development",
+          "value": "true"
+        },
+        {
+          "name": "hermeto:found_by",
+          "value": "hermeto"
+        }
+      ],
+      "purl": "pkg:npm/%40pnpm/exe.win32-arm64@12.11.2",
+      "type": "library",
+      "version": "12.11.2"
+    },
+    {
+      "bom-ref": "pkg:npm/%40pnpm/exe.win32-x64@12.11.2",
+      "name": "exe.win32-x64",
+      "properties": [
+        {
+          "name": "cdx:npm:package:development",
+          "value": "true"
+        },
+        {
+          "name": "hermeto:found_by",
+          "value": "hermeto"
+        }
+      ],
+      "purl": "pkg:npm/%40pnpm/exe.win32-x64@12.11.2",
+      "type": "library",
+      "version": "12.11.2"
+    },
+    {
+      "bom-ref": "pkg:npm/integration-tests@1.0.0?vcs_url=git%2Bhttps://github.com/hermetoproject/hermeto.git%40672a5207ca00a3b42a371fe454f45981ef2ef6c7",
+      "name": "integration-tests",
+      "properties": [
+        {
+          "name": "hermeto:found_by",
+          "value": "hermeto"
+        }
+      ],
+      "purl": "pkg:npm/integration-tests@1.0.0?vcs_url=git%2Bhttps://github.com/hermetoproject/hermeto.git%40672a5207ca00a3b42a371fe454f45981ef2ef6c7",
+      "type": "library",
+      "version": "1.0.0"
+    },
+    {
+      "bom-ref": "pkg:npm/is-number@7.0.0",
+      "name": "is-number",
+      "properties": [
+        {
+          "name": "hermeto:found_by",
+          "value": "hermeto"
+        }
+      ],
+      "purl": "pkg:npm/is-number@7.0.0",
+      "type": "library",
+      "version": "7.0.0"
+    },
+    {
+      "bom-ref": "pkg:npm/pnpm@12.11.2",
+      "name": "pnpm",
+      "properties": [
+        {
+          "name": "cdx:npm:package:development",
+          "value": "true"
+        },
+        {
+          "name": "hermeto:found_by",
+          "value": "hermeto"
+        }
+      ],
+      "purl": "pkg:npm/pnpm@12.11.2",
+      "type": "library",
+      "version": "12.11.2"
+    }
+  ],
+  "metadata": {
+    "tools": [
+      {
+        "name": "hermeto",
+        "vendor": "red hat"
+      }
+    ]
+  },
+  "specVersion": "1.6",
+  "version": 1
+}

@@ -3,6 +3,7 @@ import asyncio
 import copy
 import logging
 from pathlib import Path
+from typing import Any
 
 import aiohttp
 import yaml
@@ -121,21 +122,51 @@ def _download_resolved_packages(packages: list[PnpmPackage], deps_dir: Path) -> 
             log.warning("Missing checksum for %s", package.id)
 
 
+def _package_entries(lockfile: PnpmLock, package_id: str) -> list[dict[str, Any]]:
+    """Return the entry for a package from every document that declares it.
+
+    PnpmLock.packages merges the documents, so writing through it would patch a
+    throwaway dict rather than the documents that get dumped. A package both the
+    env document and the dependency graph declare has to be patched in both: pnpm
+    installs whichever copy the document it is reading declares, and a copy left
+    unpatched sends it to the upstream registry mid-build.
+    """
+    return [
+        document["packages"][package_id]
+        for document in (lockfile.env, lockfile.data)
+        if package_id in document.get("packages", {})
+    ]
+
+
 def _prepare_lockfile_for_hermetic_build(
     lockfile: PnpmLock, packages: list[PnpmPackage]
 ) -> ProjectFile:
     lockfile_copy = copy.deepcopy(lockfile)
 
     for package in packages:
-        data = lockfile_copy.packages[package.id]
-        resolution = data.setdefault("resolution", {})
-        if package.is_from_npm_registry or package.is_from_jsr_registry:
-            resolution["tarball"] = package.tarball_filename
-        else:
-            resolution["tarball"] = f"file://${{output_dir}}/deps/pnpm/{package.tarball_filename}"
+        for data in _package_entries(lockfile_copy, package.id):
+            resolution = data.setdefault("resolution", {})
+            if package.is_from_npm_registry or package.is_from_jsr_registry:
+                resolution["tarball"] = package.tarball_filename
+            else:
+                resolution["tarball"] = (
+                    f"file://${{output_dir}}/deps/pnpm/{package.tarball_filename}"
+                )
+
+    # Write back the documents the lockfile was read from, in order. Collapsing a
+    # two-document lockfile into one drops the pinned package manager, and dropping
+    # the leading '---' makes pnpm re-run the package manager dependency resolution
+    # and then fail the hermetic build with
+    # ERR_PNPM_FROZEN_LOCKFILE_WITH_OUTDATED_LOCKFILE.
+    documents = [lockfile_copy.data]
+    if lockfile_copy.env:
+        documents.insert(0, lockfile_copy.env)
 
     return ProjectFile(
-        abspath=lockfile_copy.path, template=yaml.safe_dump(lockfile_copy.data, sort_keys=False)
+        abspath=lockfile_copy.path,
+        template=yaml.safe_dump_all(
+            documents, sort_keys=False, explicit_start=lockfile_copy.explicit_start
+        ),
     )
 
 

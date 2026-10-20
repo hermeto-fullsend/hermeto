@@ -193,6 +193,137 @@ def test_prepare_lockfile_for_hermetic_build(tmp_path: Path) -> None:
     assert packages[1].url == f"{NPM_REGISTRY_URL}/@scope/b/-/b-2.0.0.tgz"
 
 
+def test_prepare_lockfile_for_hermetic_build_keeps_both_documents(tmp_path: Path) -> None:
+    env = {
+        "lockfileVersion": "9.0",
+        "packages": {"pnpm@12.11.2": {"resolution": {"integrity": "sha512-pnpm"}}},
+    }
+    data = {
+        "lockfileVersion": "9.0",
+        "packages": {"a@1.0.0": {"resolution": {"integrity": "sha512-abc"}}},
+    }
+    lockfile = PnpmLock(path=tmp_path / "pnpm-lock.yaml", data=data, env=env)
+    packages = [
+        PnpmPackage(
+            "pnpm@12.11.2",
+            "",
+            "pnpm",
+            "12.11.2",
+            f"{NPM_REGISTRY_URL}/pnpm/-/pnpm-12.11.2.tgz",
+            "sha512-pnpm",
+        ),
+        PnpmPackage(
+            "a@1.0.0", "", "a", "1.0.0", f"{NPM_REGISTRY_URL}/a/-/a-1.0.0.tgz", "sha512-abc"
+        ),
+    ]
+
+    project_file = _prepare_lockfile_for_hermetic_build(lockfile, packages)
+
+    assert project_file.template == yaml.safe_dump_all(
+        [
+            {
+                "lockfileVersion": "9.0",
+                "packages": {
+                    "pnpm@12.11.2": {
+                        "resolution": {
+                            "integrity": "sha512-pnpm",
+                            "tarball": "pnpm-12.11.2.tgz",
+                        }
+                    }
+                },
+            },
+            {
+                "lockfileVersion": "9.0",
+                "packages": {
+                    "a@1.0.0": {
+                        "resolution": {
+                            "integrity": "sha512-abc",
+                            "tarball": "a-1.0.0.tgz",
+                        }
+                    }
+                },
+            },
+        ],
+        sort_keys=False,
+        explicit_start=True,
+    )
+
+
+def test_prepare_lockfile_for_hermetic_build_marks_the_start_of_the_first_document(
+    tmp_path: Path,
+) -> None:
+    # pnpm writes a leading '---' and will not accept a two-document lockfile
+    # without one: it re-runs the package manager dependency resolution and then
+    # fails with ERR_PNPM_FROZEN_LOCKFILE_WITH_OUTDATED_LOCKFILE.
+    lockfile = PnpmLock(
+        path=tmp_path / "pnpm-lock.yaml",
+        data={"lockfileVersion": "9.0"},
+        env={"lockfileVersion": "9.0"},
+    )
+
+    project_file = _prepare_lockfile_for_hermetic_build(lockfile, [])
+
+    assert project_file.template.startswith("---\n")
+
+
+def test_prepare_lockfile_for_hermetic_build_leaves_a_single_document_unmarked(
+    tmp_path: Path,
+) -> None:
+    # A pnpm <= 11 lockfile is a single document and pnpm writes no leading '---'
+    # for it, so neither does Hermeto.
+    lockfile = PnpmLock(path=tmp_path / "pnpm-lock.yaml", data={"lockfileVersion": "9.0"})
+
+    project_file = _prepare_lockfile_for_hermetic_build(lockfile, [])
+
+    assert project_file.template == "lockfileVersion: '9.0'\n"
+
+
+def test_prepare_lockfile_for_hermetic_build_keeps_a_single_documents_marker(
+    tmp_path: Path,
+) -> None:
+    # The marker belongs to the file, not to the number of documents in it.
+    # Inferring it from the presence of an env document drops it here.
+    lockfile = PnpmLock(
+        path=tmp_path / "pnpm-lock.yaml",
+        data={"lockfileVersion": "9.0"},
+        explicit_start=True,
+    )
+
+    project_file = _prepare_lockfile_for_hermetic_build(lockfile, [])
+
+    assert project_file.template == "---\nlockfileVersion: '9.0'\n"
+
+
+def test_prepare_lockfile_for_hermetic_build_rewrites_a_shared_package_in_both_documents(
+    tmp_path: Path,
+) -> None:
+    # pnpm installs whichever copy the document it is reading declares. Patching
+    # only the first one hermeto finds leaves the other pointing at the upstream
+    # registry, and the hermetic build then reaches the network.
+    entry = {"resolution": {"integrity": "sha512-pnpm"}}
+    lockfile = PnpmLock(
+        path=tmp_path / "pnpm-lock.yaml",
+        data={"lockfileVersion": "9.0", "packages": {"pnpm@12.11.2": dict(entry)}},
+        env={"lockfileVersion": "9.0", "packages": {"pnpm@12.11.2": dict(entry)}},
+    )
+    package = PnpmPackage(
+        "pnpm@12.11.2",
+        "",
+        "pnpm",
+        "12.11.2",
+        f"{NPM_REGISTRY_URL}/pnpm/-/pnpm-12.11.2.tgz",
+        "sha512-pnpm",
+    )
+
+    project_file = _prepare_lockfile_for_hermetic_build(lockfile, [package])
+
+    env_document, graph_document = yaml.safe_load_all(project_file.template)
+    assert env_document["packages"]["pnpm@12.11.2"]["resolution"]["tarball"] == "pnpm-12.11.2.tgz"
+    assert graph_document["packages"]["pnpm@12.11.2"]["resolution"]["tarball"] == (
+        "pnpm-12.11.2.tgz"
+    )
+
+
 @pytest.mark.parametrize(
     ("package", "expected_path"),
     [

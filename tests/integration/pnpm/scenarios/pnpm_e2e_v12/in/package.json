@@ -1,0 +1,16 @@
+{
+  "name": "integration-tests",
+  "version": "1.0.0",
+  "type": "module",
+  "packageManager": "pnpm@12.11.2",
+  "devEngines": {
+    "packageManager": {
+      "name": "pnpm",
+      "version": "12.11.2",
+      "onFail": "download"
+    }
+  },
+  "dependencies": {
+    "is-number": "7.0.0"
+  }
+}

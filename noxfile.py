@@ -125,11 +125,7 @@ def bdd(session: Session) -> None:
     # disable color output in GitHub Actions
     env = {"TERM": "dumb"} if os.getenv("CI") == "true" else None
     cmd = "pytest --log-cli-level=WARNING tests/bdd"
-    # Exit code 5 is "no tests collected", which is the correct state while the
-    # suite is being bootstrapped and no scenario is bound yet. Drop this once
-    # the first step definitions land, otherwise an emptied tests/bdd/ passes
-    # silently. Feature files themselves are always checked by bdd-lint.
-    session.run(*cmd.split(), *session.posargs, env=env, success_codes=[0, 5])
+    session.run(*cmd.split(), *session.posargs, env=env)
 
 
 def _run_integration_tests(session: Session, env: dict[str, str]) -> None:

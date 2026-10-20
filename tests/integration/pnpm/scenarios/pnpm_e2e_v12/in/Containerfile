@@ -1,0 +1,34 @@
+FROM mirror.gcr.io/node:24-alpine
+
+# Test disabled network access
+RUN if getent hosts www.google.com; then echo "Has network access!"; exit 1; fi
+
+# This scenario deliberately does not run `pnpm install`.
+#
+# pnpm 12 resolves packageManagerDependencies and configDependencies -- the
+# contents of the lockfile's env document -- before it reads the project's
+# .npmrc, with a client that refuses a file:// registry. It fails with
+# ERR_PNPM_BAD_CONFIG_DEP ("URL scheme is not allowed") when the registry is set
+# and reaches for registry.npmjs.org when it is not, and it ignores the
+# resolution.tarball Hermeto writes for those packages. No offline install of a
+# project with an env document can succeed today, whatever Hermeto emits.
+#
+# What this scenario locks down is the prefetch half, which is what regressed:
+# the two-document lockfile is accepted, every package named by *both* documents
+# is downloaded, and the rewritten lockfile keeps its two-document shape. See
+# https://github.com/hermetoproject/hermeto/issues/1802
+
+# The pinned package manager and its platform binaries come from the env
+# document, the application dependency from the project document.
+RUN test -f /tmp/hermeto-output/deps/pnpm/npm/pnpm-12.11.2.tgz
+RUN test -f /tmp/hermeto-output/deps/pnpm/npm/pnpm-exe.linux-x64-12.11.2.tgz
+RUN test -f /tmp/hermeto-output/deps/pnpm/npm/is-number-7.0.0.tgz
+
+WORKDIR /src
+
+# The rewritten lockfile is still a two-document stream, with the leading '---'
+# pnpm wrote itself. Dropping either makes pnpm re-resolve the pinned package
+# manager and fail with ERR_PNPM_FROZEN_LOCKFILE_WITH_OUTDATED_LOCKFILE.
+RUN head -n 1 pnpm-lock.yaml | grep -qx -- '---'
+RUN test "$(grep -cx -- '---' pnpm-lock.yaml)" = "2"
+RUN grep -q 'packageManagerDependencies' pnpm-lock.yaml

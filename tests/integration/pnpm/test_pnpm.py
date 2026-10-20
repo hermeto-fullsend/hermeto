@@ -27,6 +27,16 @@ SCENARIOS_DIR = Path(__file__).parent / "scenarios"
             [],
             id="pnpm_e2e_v11",
         ),
+        # pnpm 12 pins the package manager in the lockfile itself, so there is no
+        # generic artifact to fetch alongside it.
+        pytest.param(
+            utils.TestParameters(
+                packages=({"type": "pnpm"},),
+            ),
+            [],
+            [],
+            id="pnpm_e2e_v12",
+        ),
     ],
 )
 def test_e2e_pnpm(

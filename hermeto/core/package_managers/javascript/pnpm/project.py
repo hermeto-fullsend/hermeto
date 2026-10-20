@@ -13,15 +13,38 @@ from hermeto.core.package_managers.javascript.npm import NPM_REGISTRY_URL
 JSR_REGISTRY_URL = "https://npm.jsr.io"
 JSR_REGISTRY_PREFIX = "@jsr/"
 
+# Since pnpm 12 a pnpm-lock.yaml may be a stream of two documents: an optional
+# leading "env" document recording the project's config dependencies and pinned
+# package manager, followed by the project's dependency graph, which is always
+# last. For pnpm <= 11 the dependency graph is the only document.
+# https://pnpm.io/lockfile
+MAX_LOCKFILE_DOCUMENTS = 2
+
 
 class PnpmLock(UserDict):
     """Class representing a pnpm-lock.yaml file."""
 
-    def __init__(self, path: Path, data: dict[str, Any]) -> None:
-        """Initialize a PnpmLock object."""
+    def __init__(
+        self,
+        path: Path,
+        data: dict[str, Any],
+        env: dict[str, Any] | None = None,
+        explicit_start: bool | None = None,
+    ) -> None:
+        """Initialize a PnpmLock object.
+
+        :param data: the project's dependency graph, the last document in the file
+        :param env: the leading env document, when the lockfile has one
+        :param explicit_start: whether the file opened with a '---' document start
+            marker. Only the reader knows; callers that construct a lockfile by hand
+            get the marker pnpm writes for the number of documents they passed.
+        """
         self.path = path
+        self.env = env or {}
+        self.explicit_start = bool(self.env) if explicit_start is None else explicit_start
         super().__init__(data)
         _ensure_lockfile_version_is_supported(self)
+        _ensure_documents_agree_on_shared_packages(self)
 
     @classmethod
     def from_file(cls, path: Path) -> "PnpmLock":
@@ -31,9 +54,9 @@ class PnpmLock(UserDict):
                 path, solution="Run 'pnpm install' to generate the pnpm-lock.yaml file."
             )
 
+        content = path.read_text()
         try:
-            with path.open() as f:
-                data = yaml.safe_load(f)
+            documents = [doc for doc in yaml.safe_load_all(content) if doc is not None]
         except yaml.YAMLError as e:
             raise InvalidLockfileFormat(
                 path,
@@ -41,7 +64,28 @@ class PnpmLock(UserDict):
                 solution="The pnpm-lock.yaml file must contain valid YAML.",
             )
 
-        return cls(path, data)
+        if len(documents) > MAX_LOCKFILE_DOCUMENTS:
+            # Keeping only the first and the last would drop everything between them
+            # from the prefetch, the SBOM and the rewritten lockfile without a word.
+            raise UnsupportedFeature(
+                f"Unsupported pnpm-lock.yaml: Hermeto reads at most "
+                f"{MAX_LOCKFILE_DOCUMENTS} YAML documents, this one holds {len(documents)}",
+                solution=(
+                    "Regenerate the lockfile with 'pnpm install'. A pnpm lockfile is an "
+                    "optional leading env document followed by the project's dependency "
+                    "graph -- see docs/pnpm.md. If pnpm itself wrote this file, please "
+                    "report it to the Hermeto maintainers."
+                ),
+            )
+
+        # Fall back to an empty mapping for an empty file to preserve the old behavior:
+        # the missing lockfileVersion is reported instead of crashing on the lookup below.
+        return cls(
+            path,
+            documents[-1] if documents else {},
+            env=documents[0] if len(documents) > 1 else None,
+            explicit_start=_starts_with_document_marker(content),
+        )
 
     @classmethod
     def from_dir(cls, path: Path) -> "PnpmLock":
@@ -50,8 +94,13 @@ class PnpmLock(UserDict):
 
     @property
     def packages(self) -> dict[str, dict[str, Any]]:
-        """Return the 'packages' key from the pnpm-lock.yaml file."""
-        return self.get("packages", {})
+        """Return the 'packages' from every document in the pnpm-lock.yaml file.
+
+        pnpm installs the env document's packages too -- the pinned package manager
+        and its platform binaries -- so they must be fetched and reported like any
+        other dependency. https://pnpm.io/lockfile
+        """
+        return {**self.env.get("packages", {}), **self.get("packages", {})}
 
     @property
     def snapshots(self) -> dict[str, dict[str, Any]]:
@@ -124,19 +173,85 @@ class PnpmPackage:
         return self.url.startswith(JSR_REGISTRY_URL)
 
 
-def _ensure_lockfile_version_is_supported(lockfile: PnpmLock) -> None:
-    """Ensure Hermeto supports the lockfile version in the pnpm-lock.yaml file."""
-    raw_version = str(lockfile.get("lockfileVersion", ""))
-    if not raw_version:
-        raise InvalidLockfileFormat(
-            lockfile.path,
-            err_details=None,
-            solution="The pnpm-lock.yaml file must contain a lockfileVersion field.",
-        )
+def _starts_with_document_marker(content: str) -> bool:
+    """Return True if a pnpm-lock.yaml opens with a YAML document start marker.
 
-    version = Version.parse(raw_version, optional_minor_and_patch=True)
-    if version.major != 9:
-        raise UnsupportedFeature(f"Unsupported lockfileVersion: '{raw_version}'")
+    pnpm writes the marker itself and will not accept a lockfile that lost it: the
+    stream still parses, but pnpm re-runs the package manager dependency resolution
+    and then fails the hermetic build with
+    ERR_PNPM_FROZEN_LOCKFILE_WITH_OUTDATED_LOCKFILE. Record what the file had rather
+    than inferring it from the document count, so the rewrite hands pnpm back the
+    same stream it was given.
+
+    >>> _starts_with_document_marker("---\\nlockfileVersion: '9.0'\\n")
+    True
+    >>> _starts_with_document_marker("lockfileVersion: '9.0'\\n")
+    False
+    """
+    for line in content.splitlines():
+        if not line.strip():
+            continue
+        return line.rstrip() == "---" or line.startswith("--- ")
+
+    return False
+
+
+def _ensure_lockfile_version_is_supported(lockfile: PnpmLock) -> None:
+    """Ensure Hermeto supports the lockfile version of every document in the file.
+
+    Each document carries its own lockfileVersion. pnpm writes the same version to
+    both today, but nothing in the format promises that, and parsing an unknown
+    format as if it were 9.0 would quietly mis-report the SBOM.
+    """
+    labeled_documents: list[tuple[str | None, dict[str, Any]]] = (
+        [("the env document", lockfile.env)] if lockfile.env else []
+    )
+    labeled_documents.append((None, lockfile.data))
+
+    for where, document in labeled_documents:
+        location = f" in {where}" if where else ""
+
+        raw_version = str(document.get("lockfileVersion", ""))
+        if not raw_version:
+            raise InvalidLockfileFormat(
+                lockfile.path,
+                err_details=None,
+                solution=(
+                    f"The pnpm-lock.yaml file must contain a lockfileVersion field{location}."
+                ),
+            )
+
+        version = Version.parse(raw_version, optional_minor_and_patch=True)
+        if version.major != 9:
+            raise UnsupportedFeature(f"Unsupported lockfileVersion: '{raw_version}'{location}")
+
+
+def _ensure_documents_agree_on_shared_packages(lockfile: PnpmLock) -> None:
+    """Reject a package the documents declare with different checksums.
+
+    PnpmLock.packages merges the documents, so a duplicate silently resolves to the
+    dependency graph's entry and the env document's checksum is never verified nor
+    reported. Hermeto cannot tell which tarball pnpm would install, so it refuses
+    to pick one.
+    """
+    graph_packages = lockfile.get("packages", {})
+
+    for package_id, env_package in lockfile.env.get("packages", {}).items():
+        graph_package = graph_packages.get(package_id)
+        if graph_package is None:
+            continue
+
+        env_integrity = env_package.get("resolution", {}).get("integrity")
+        graph_integrity = graph_package.get("resolution", {}).get("integrity")
+        if env_integrity != graph_integrity:
+            raise InvalidLockfileFormat(
+                lockfile.path,
+                err_details=f"the documents declare different checksums for '{package_id}'",
+                solution=(
+                    "Regenerate the lockfile with 'pnpm install'. Hermeto cannot tell "
+                    "which of the two tarballs pnpm would install, so it will not guess."
+                ),
+            )
 
 
 def parse_packages(lockfile: PnpmLock) -> list[PnpmPackage]:
