@@ -16,6 +16,7 @@
   * [Comment guidelines](#comment-guidelines)
   * [Unit tests](#unit-tests)
   * [Integration tests](#integration-tests)
+  * [Behavior tests](#behavior-tests)
   * [Adding new dependencies to the project](#adding-new-dependencies-to-the-project)
 * [Releasing](#releasing)
 
